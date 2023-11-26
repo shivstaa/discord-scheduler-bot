@@ -53,8 +53,15 @@ async def create_private_event(
     user_name = interaction.user.name
     event_start = f"{event_start_date} {event_start_time}"
     event_end = f"{event_end_date} {event_end_time}"
-    event_start = datetime.strptime(f"{event_start_date} {event_start_time}", "%Y-%m-%d %H:%M:%S")
-    event_end = datetime.strptime(f"{event_end_date} {event_end_time}", "%Y-%m-%d %H:%M:%S")
+    try:
+        event_start = datetime.strptime(f"{event_start_date} {event_start_time}", "%Y-%m-%d %H:%M:%S")
+        event_end = datetime.strptime(f"{event_end_date} {event_end_time}", "%Y-%m-%d %H:%M:%S")
+    except ValueError as e:
+        await interaction.response.send_message(
+            "Invalid timestamps, please make sure your timestamps follow the format (YYYY-MM-DD) for date and (HH:MM:SS) for time.",
+            ephemeral=True
+        )
+        return
     async with bot.pool.acquire() as conn:
 
         user = await conn.fetchrow("SELECT * FROM \"user\" WHERE uiud = $1", uiud)
@@ -82,6 +89,13 @@ async def create_private_event(
             uiud, event_name, event_location, event_start, event_end
         )
         if eid:
+            await conn.execute(
+                """
+                INSERT INTO scheduled (uiud, eid, status, notification) 
+                VALUES ($1, $2, 'Yes', 0)
+                """,
+                uiud, eid
+            )
             await interaction.response.send_message(
                 f"{interaction.user.mention}, {event_name} at {event_location} has been scheduled for {event_start_date} from {event_start_time} to {event_end_time}.", ephemeral=True
             )
@@ -117,8 +131,15 @@ async def create_group_event(
     guild_name = interaction.guild.name
     uiud = str(interaction.user.id)
     user_name = interaction.user.name
-    event_start = datetime.strptime(f"{event_start_date} {event_start_time}", "%Y-%m-%d %H:%M:%S")
-    event_end = datetime.strptime(f"{event_end_date} {event_end_time}", "%Y-%m-%d %H:%M:%S")
+    try:
+        event_start = datetime.strptime(f"{event_start_date} {event_start_time}", "%Y-%m-%d %H:%M:%S")
+        event_end = datetime.strptime(f"{event_end_date} {event_end_time}", "%Y-%m-%d %H:%M:%S")
+    except ValueError as e:
+        await interaction.response.send_message(
+            "Invalid timestamps, please make sure your timestamps follow the format (YYYY-MM-DD) for date and (HH:MM:SS) for time.",
+            ephemeral=True
+        )
+        return
     
     async with bot.pool.acquire() as conn:
         # Check if the user exists
@@ -159,6 +180,13 @@ async def create_group_event(
             uiud, gid, event_name, event_location, event_start, event_end
         )
         if eid:
+            await conn.execute(
+                """
+                INSERT INTO scheduled (uiud, eid, status, notification) 
+                VALUES ($1, $2, 'Yes', 0)
+                """,
+                uiud, eid
+            )
             await interaction.response.send_message(
                 f"{interaction.user.mention}, {event_name} at {event_location} has been scheduled for {event_start_date} from {event_start_time} to {event_end_time} for the group {guild_name}."
             )
