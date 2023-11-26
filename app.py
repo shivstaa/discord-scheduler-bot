@@ -147,7 +147,6 @@ async def create_group_event(
         if user is None:
             await conn.execute("INSERT INTO \"user\" (uiud, name) VALUES ($1, $2)", uiud, user_name)
         
-        # Check if the guild exists in the "group" table
         group = await conn.fetchrow("SELECT * FROM \"group\" WHERE gid = $1", gid)
         if group is None:
             await conn.execute("INSERT INTO \"group\" (gid, groupname) VALUES ($1, $2)", gid, guild_name)
@@ -157,23 +156,12 @@ async def create_group_event(
             uiud, gid
         )
         if usergroup is None:
-            # Associate the user with the guild if not already associated
             await conn.execute(
                 "INSERT INTO usergroup (uiud, gid) VALUES ($1, $2)", 
                 uiud, gid
             )
         
-        # Check for overlapping events
-        overlap = await conn.fetchrow(
-            "SELECT * FROM event WHERE uiud = $1 AND timestart < $3 AND timeend > $2",
-            uiud, event_start, event_end
-        )
-        if overlap:
-            await interaction.response.send_message(
-                f"{interaction.user.mention}, there is an overlapping event.", ephemeral=True
-            )
-            return
-        
+
 
         eid = await conn.fetchval(
             "INSERT INTO event (uiud, gid, meetingname, location, timestart, timeend) VALUES ($1, $2, $3, $4, $5, $6) RETURNING eid",
