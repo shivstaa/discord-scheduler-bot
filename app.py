@@ -184,43 +184,40 @@ async def create_group_event(
                 ephemeral=True
             )
             
-
 #list out all events (outputs only to original user)
 @bot.tree.command(name="show_events")
 async def show_events(interaction: discord.Interaction):
+    uiud = str(interaction.user.id)
+    gid = interaction.guild_id
     async with bot.pool.acquire() as conn:
-        uiud = str(interaction.user.id)
-        rows = await conn.fetch(
-            "SELECT meetingname, location, timestart, timeend FROM event WHERE uiud = $1", uiud
+        personal = await conn.fetch(
+            "SELECT meetingname, location, timestart, timeend FROM event WHERE uiud = $1 AND gid IS NULL", uiud
         )
+        if gid:
+            server = await conn.fetch(
+                """
+                SELECT e.meetingname, e.location, e.timestart, e.timeend 
+                FROM event e
+                INNER JOIN scheduled s ON e.eid = s.eid
+                WHERE e.gid = $1 AND s.uiud = $2
+                """, gid, uiud
+            )
+        else:
+            server = []
+
+        rows = personal + server
+
+
         if rows:
             response = "Here are your events:\n" + "\n".join(
                 f"{row['meetingname']} at {row['location']}, from {row['timestart']} to {row['timeend']}."
                 for row in rows
             )
         else:
-            response = "No events."
-        await interaction.response.send_message(response, ephemeral=True)
-        
-@bot.tree.command(name="show_server_events")
-async def show_server_events(interaction: discord.Interaction):
-    gid = interaction.guild_id 
-    if gid is None:
-        await interaction.response.send_message("This command can only be used in a server.", ephemeral=True)
-        return
-    async with bot.pool.acquire() as conn:
-        rows = await conn.fetch(
-            "SELECT meetingname, location, timestart, timeend FROM event WHERE gid = $1", gid
-        )
+            response = "You have no events scheduled."
 
-        if rows:
-            response = f"Here are {interaction.guild.name}'s events:\n" + "\n".join(
-                f"{row['meetingname']} at {row['location']}, from {row['timestart']} to {row['timeend']}."
-                for row in rows
-            )
-        else:
-            response = "No server events."
-        await interaction.response.send_message(response)
+        await interaction.response.send_message(response, ephemeral=True)
+
 
     
 
