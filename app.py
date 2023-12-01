@@ -3,10 +3,10 @@ import discord
 import asyncpg
 from datetime import datetime
 from discord import app_commands
-from discord.ext import commands, tasks
+from discord.ext import commands
 import os
+from tz_convert import local_to_utc, utc_to_local
 from dotenv import load_dotenv
-load_dotenv()
 
 intents = discord.Intents.all()
 
@@ -212,8 +212,7 @@ async def show_events(interaction: discord.Interaction):
 
         if rows:
             response = "Here are your events:\n" + "\n".join(
-                f"Event {row['eid']}: {row['meetingname']} at {row['location']}, from {row['timestart']} to {row['timeend']}."
-                for row in rows
+                f"{row['meetingname']} at {row['location']}, from {utc_to_local(row['timestart'])} to {utc_to_local(row['timeend'])}." for row in rows
             )
         else:
             response = "You have no events scheduled."
