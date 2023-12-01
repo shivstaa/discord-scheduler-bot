@@ -3,7 +3,7 @@ import discord
 import asyncpg
 from datetime import datetime
 from discord import app_commands
-from discord.ext import commands
+from discord.ext import commands, tasks
 import os
 from dotenv import load_dotenv
 load_dotenv()
@@ -13,6 +13,7 @@ intents = discord.Intents.all()
 # intents.message_content = True
 bot = commands.Bot(command_prefix='!', intents=intents)
 
+
 @bot.event
 async def on_ready():
     print(f'We have logged in as {bot.user}')
@@ -21,7 +22,7 @@ async def on_ready():
         bot.pool = await asyncpg.create_pool(
             host=os.getenv("HOST"),
             database=os.getenv("DATABASE"),
-            user=os.getenv("USER"),
+            user=os.getenv("USERNAME"),
             password=os.getenv("PASSWORD")
         )
         synced = await bot.tree.sync()
@@ -29,6 +30,7 @@ async def on_ready():
         
     except Exception as e:
         print(e)
+
 
 # create private event
 @bot.tree.command(name="create_private_event")
@@ -191,12 +193,12 @@ async def show_events(interaction: discord.Interaction):
     gid = interaction.guild_id
     async with bot.pool.acquire() as conn:
         personal = await conn.fetch(
-            "SELECT meetingname, location, timestart, timeend FROM event WHERE uiud = $1 AND gid IS NULL", uiud
+            "SELECT eid, meetingname, location, timestart, timeend FROM event WHERE uiud = $1 AND gid IS NULL", uiud
         )
         if gid:
             server = await conn.fetch(
                 """
-                SELECT e.meetingname, e.location, e.timestart, e.timeend 
+                SELECT e.eid, e.meetingname, e.location, e.timestart, e.timeend 
                 FROM event e
                 INNER JOIN scheduled s ON e.eid = s.eid
                 WHERE e.gid = $1 AND s.uiud = $2
@@ -210,13 +212,83 @@ async def show_events(interaction: discord.Interaction):
 
         if rows:
             response = "Here are your events:\n" + "\n".join(
-                f"{row['meetingname']} at {row['location']}, from {row['timestart']} to {row['timeend']}."
+                f"Event {row['eid']}: {row['meetingname']} at {row['location']}, from {row['timestart']} to {row['timeend']}."
                 for row in rows
             )
         else:
             response = "You have no events scheduled."
 
         await interaction.response.send_message(response, ephemeral=True)
+
+
+#shows all server events so a user can potentially sign up for it
+@bot.tree.command(name="show_server_events")
+async def show_server_events(interaction: discord.Interaction):
+    if interaction.guild_id is None:
+        await interaction.response.send_message("Server events can only be displayed while using this command in a server.", ephemeral=True)
+        return
+
+    async with bot.pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT eid, meetingname, location, timestart, timeend FROM event WHERE gid = $1",
+            interaction.guild_id
+        )
+
+    if rows:
+        response = f"Here are the events for {interaction.guild.name}:\n" + "\n".join(
+            f"Event {row['eid']}: {row['meetingname']} at {row['location']}, from {row['timestart']} to {row['timeend']}."
+            for row in rows
+        )
+    else:
+        response = f"No events available for {interaction.guild.name}."
+
+    await interaction.response.send_message(response)
+
+
+@bot.tree.command(name="get_notified")
+@app_commands.describe(event_number="The event number you want to get notified for")
+async def get_notified(interaction: discord.Interaction, event_number: int):
+    # Ensure this is used within a server
+    if interaction.guild_id is None:
+        await interaction.response.send_message("This command can only be used in a server.", ephemeral=True)
+        return
+
+    uiud = str(interaction.user.id)
+    gid = interaction.guild_id
+
+    async with bot.pool.acquire() as conn:
+        # Check if the event exists in the server
+        event = await conn.fetchrow(
+            "SELECT eid, meetingname FROM event WHERE eid = $1 AND gid = $2",
+            event_number, gid
+        )
+        
+        if event:
+            existing_signup = await conn.fetchrow(
+                "SELECT * FROM scheduled WHERE uiud = $1 AND eid = $2",
+                uiud, event['eid']
+            )
+            
+            if not existing_signup:
+                await conn.execute(
+                    "INSERT INTO scheduled (uiud, eid, status, notification) VALUES ($1, $2, 'Yes', 0)", 
+                    # right now im gonna do it so 'Yes' just means signed up and 0 means not notified, you would change to 1 once they have been, and then they wont get pinged again that way.
+                    uiud, event['eid']
+                )
+                await interaction.response.send_message(
+                    f"You have been signed up for '{event['meetingname']}'.",
+                    ephemeral=True
+                )
+            else:
+                await interaction.response.send_message(
+                    f"You are already signed up for '{event['meetingname']}'.",
+                    ephemeral=True
+                )
+        else:
+            await interaction.response.send_message(
+                f"Event number {event_number} is either not in this server, or the event number is invalid",
+                ephemeral=True
+            )
 
 
     
