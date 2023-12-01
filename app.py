@@ -291,6 +291,78 @@ async def get_notified(interaction: discord.Interaction, event_number: int):
             )
 
 
+#shows all server events so a user can potentially sign up for it
+@bot.tree.command(name="show_server_events")
+async def show_server_events(interaction: discord.Interaction):
+    if interaction.guild_id is None:
+        await interaction.response.send_message("Server events can only be displayed while using this command in a server.", ephemeral=True)
+        return
+
+    async with bot.pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT eid, meetingname, location, timestart, timeend FROM event WHERE gid = $1",
+            interaction.guild_id
+        )
+
+    if rows:
+        response = f"Here are the events for {interaction.guild.name}:\n" + "\n".join(
+            f"Event {row['eid']}: {row['meetingname']} at {row['location']}, from {utc_to_local(row['timestart'])} to {utc_to_local(row['timeend'])}."
+            for row in rows
+        )
+    else:
+        response = f"No events available for {interaction.guild.name}."
+
+    await interaction.response.send_message(response)
+
+
+@bot.tree.command(name="get_notified")
+@app_commands.describe(event_number="The event number you want to get notified for")
+async def get_notified(interaction: discord.Interaction, event_number: int):
+    # Ensure this is used within a server
+    if interaction.guild_id is None:
+        await interaction.response.send_message("This command can only be used in a server.", ephemeral=True)
+        return
+
+    uiud = str(interaction.user.id)
+    gid = interaction.guild_id
+
+    async with bot.pool.acquire() as conn:
+        # Check if the event exists in the server
+        event = await conn.fetchrow(
+            "SELECT eid, meetingname FROM event WHERE eid = $1 AND gid = $2",
+            event_number, gid
+        )
+        
+        if event:
+            existing_signup = await conn.fetchrow(
+                "SELECT * FROM scheduled WHERE uiud = $1 AND eid = $2",
+                uiud, event['eid']
+            )
+            
+            if not existing_signup:
+                await conn.execute(
+                    "INSERT INTO scheduled (uiud, eid, status, notification) VALUES ($1, $2, 'Yes', 0)", 
+                    # right now im gonna do it so 'Yes' just means signed up and 0 means not notified, you would change to 1 once they have been, and then they wont get pinged again that way.
+                    uiud, event['eid']
+                )
+                await interaction.response.send_message(
+                    f"You have been signed up for '{event['meetingname']}'.",
+                    ephemeral=True
+                )
+            else:
+                await interaction.response.send_message(
+                    f"You are already signed up for '{event['meetingname']}'.",
+                    ephemeral=True
+                )
+        else:
+            await interaction.response.send_message(
+                f"Event number {event_number} is either not in this server, or the event number is invalid",
+                ephemeral=True
+            )
+
+
+
+
     
 
 bot.run(os.getenv("DISCORD_TOKEN"))
