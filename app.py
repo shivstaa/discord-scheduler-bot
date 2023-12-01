@@ -8,6 +8,8 @@ import os
 from tz_convert import local_to_utc, utc_to_local
 from dotenv import load_dotenv
 
+load_dotenv()
+
 intents = discord.Intents.all()
 
 # intents.message_content = True
