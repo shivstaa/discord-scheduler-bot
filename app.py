@@ -5,7 +5,9 @@ from datetime import datetime
 from discord import app_commands
 from discord.ext import commands
 import os
+from tz_convert import local_to_utc, utc_to_local
 from dotenv import load_dotenv
+
 load_dotenv()
 
 intents = discord.Intents.all()
@@ -32,6 +34,7 @@ async def on_ready():
 
 # create private event
 @bot.tree.command(name="create_private_event")
+
 @app_commands.describe(
     event_name="Event name", 
     event_start_date="Event Start Date", 
@@ -134,6 +137,10 @@ async def create_group_event(
     try:
         event_start = datetime.strptime(f"{event_start_date} {event_start_time}", "%Y-%m-%d %H:%M:%S")
         event_end = datetime.strptime(f"{event_end_date} {event_end_time}", "%Y-%m-%d %H:%M:%S")
+        
+        # convert to UTC
+        event_start, event_end = local_to_utc(event_start), local_to_utc(event_end)
+
     except ValueError as e:
         await interaction.response.send_message(
             "Invalid timestamps, please make sure your timestamps follow the format (YYYY-MM-DD) for date and (HH:MM:SS) for time.",
@@ -209,9 +216,9 @@ async def show_events(interaction: discord.Interaction):
 
 
         if rows:
+            # Convert from UTC back to the user's time
             response = "Here are your events:\n" + "\n".join(
-                f"{row['meetingname']} at {row['location']}, from {row['timestart']} to {row['timeend']}."
-                for row in rows
+                f"{row['meetingname']} at {row['location']}, from {utc_to_local(row['timestart'])} to {utc_to_local(row['timeend'])}." for row in rows
             )
         else:
             response = "You have no events scheduled."
