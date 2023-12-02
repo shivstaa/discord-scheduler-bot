@@ -113,10 +113,10 @@ async def create_private_event(
 @bot.tree.command(name="create_group_event")
 @app_commands.describe(
     event_name="Event name", 
-    event_start_date="Event Start Date", 
-    event_end_date="Event End Date", 
-    event_start_time="Event Start Time", 
-    event_end_time="Event End Time",
+    event_start_date="Event Start Date (YYYY-MM-DD)", 
+    event_end_date="Event End Date (YYYY-MM-DD)", 
+    event_start_time="Event Start Time (HH:MM:SS)", 
+    event_end_time="Event End Time (HH:MM:SS)",
     event_location="Event Location"
 )
 async def create_group_event(
@@ -296,12 +296,5 @@ async def get_notified(interaction: discord.Interaction, event_number: int):
                 f"Event number {event_number} is either not in this server, or the event number is invalid",
                 ephemeral=True
             )
-
-
-
-
-
-
-    
 
 bot.run(os.getenv("DISCORD_TOKEN"))
