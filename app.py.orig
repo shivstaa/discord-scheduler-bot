@@ -24,8 +24,11 @@ async def on_ready():
         bot.pool = await asyncpg.create_pool(
             host=os.getenv("HOST"),
             database=os.getenv("DATABASE"),
+<<<<<<< HEAD
             user=os.getenv("USERNAME"),
-            # user=os.getenv("USER_NAME"),
+=======
+            user=os.getenv("USER_NAME"),
+>>>>>>> 366400fd8dbe1aaa68716bfc5f8c5998a9b65f8e
             password=os.getenv("PASSWORD")
         )
         synced = await bot.tree.sync()
@@ -39,13 +42,21 @@ async def on_ready():
 
 
 @bot.tree.command(name="create_private_event")
-@app_commands.describe(
 
+@app_commands.describe(
+<<<<<<< HEAD
     event_name="Event name",
-    event_start_date="Event Start Date (YYYY-MM-DD)",
-    event_end_date="Event End Date (YYYY-MM-DD)",
-    event_start_time="Event Start Time (HH:MM:SS)",
+    event_start_date="Event Start Date",
+    event_end_date="Event End Date",
+    event_start_time="Event Start Time",
+    event_end_time="Event End Time",
+=======
+    event_name="Event name", 
+    event_start_date="Event Start Date (YYYY-MM-DD)", 
+    event_end_date="Event End Date (YYYY-MM-DD)", 
+    event_start_time="Event Start Time (HH:MM:SS)", 
     event_end_time="Event End Time (HH:MM:SS)",
+>>>>>>> 366400fd8dbe1aaa68716bfc5f8c5998a9b65f8e
     event_location="Event Location"
 )
 async def create_private_event(
@@ -82,7 +93,7 @@ async def create_private_event(
             """
             SELECT * FROM event
             WHERE uiud = $1
-            AND timestart < $3
+            AND timestart < $3 
             AND timeend > $2
             """,
             uiud, event_start, event_end
@@ -100,7 +111,7 @@ async def create_private_event(
         if eid:
             await conn.execute(
                 """
-                INSERT INTO scheduled (uiud, eid, status, notification)
+                INSERT INTO scheduled (uiud, eid, status, notification) 
                 VALUES ($1, $2, 'Yes', 0)
                 """,
                 uiud, eid
@@ -118,12 +129,19 @@ async def create_private_event(
 
 @bot.tree.command(name="create_group_event")
 @app_commands.describe(
+<<<<<<< HEAD
     event_name="Event name",
-    event_start_date="Event Start Date (YYYY-MM-DD)",
-    event_end_date="Event End Date (YYYY-MM-DD)",
-    event_start_time="Event Start Time (HH:MM:SS)",
+    event_start_date="Event Start Date",
+    event_end_date="Event End Date",
+    event_start_time="Event Start Time",
+    event_end_time="Event End Time",
+=======
+    event_name="Event name", 
+    event_start_date="Event Start Date (YYYY-MM-DD)", 
+    event_end_date="Event End Date (YYYY-MM-DD)", 
+    event_start_time="Event Start Time (HH:MM:SS)", 
     event_end_time="Event End Time (HH:MM:SS)",
-
+>>>>>>> 366400fd8dbe1aaa68716bfc5f8c5998a9b65f8e
     event_location="Event Location"
 )
 async def create_group_event(
@@ -144,15 +162,19 @@ async def create_group_event(
     uiud = str(interaction.user.id)
     user_name = interaction.user.name
     try:
+<<<<<<< HEAD
         event_start = datetime.strptime(
             f"{event_start_date} {event_start_time}", "%Y-%m-%d %H:%M:%S")
         event_end = datetime.strptime(
             f"{event_end_date} {event_end_time}", "%Y-%m-%d %H:%M:%S")
-
+=======
+        event_start = datetime.strptime(f"{event_start_date} {event_start_time}", "%Y-%m-%d %H:%M:%S")
+        event_end = datetime.strptime(f"{event_end_date} {event_end_time}", "%Y-%m-%d %H:%M:%S")
+        
         # convert to UTC
-        event_start, event_end = local_to_utc(
-            event_start), local_to_utc(event_end)
+        event_start, event_end = local_to_utc(event_start), local_to_utc(event_end)
 
+>>>>>>> 366400fd8dbe1aaa68716bfc5f8c5998a9b65f8e
     except ValueError as e:
         await interaction.response.send_message(
             "Invalid timestamps, please make sure your timestamps follow the format (YYYY-MM-DD) for date and (HH:MM:SS) for time.",
@@ -276,8 +298,9 @@ async def show_events(interaction: discord.Interaction):
         await interaction.response.send_message(response, ephemeral=True)
 
 
-# shows all server events so a user can potentially sign up for it
-
+<<<<<<< HEAD
+=======
+#shows all server events so a user can potentially sign up for it
 @bot.tree.command(name="show_server_events")
 async def show_server_events(interaction: discord.Interaction):
     if interaction.guild_id is None:
@@ -318,16 +341,16 @@ async def get_notified(interaction: discord.Interaction, event_number: int):
             "SELECT eid, meetingname FROM event WHERE eid = $1 AND gid = $2",
             event_number, gid
         )
-
+        
         if event:
             existing_signup = await conn.fetchrow(
                 "SELECT * FROM scheduled WHERE uiud = $1 AND eid = $2",
                 uiud, event['eid']
             )
-
+            
             if not existing_signup:
                 await conn.execute(
-                    "INSERT INTO scheduled (uiud, eid, status, notification) VALUES ($1, $2, 'Yes', 0)",
+                    "INSERT INTO scheduled (uiud, eid, status, notification) VALUES ($1, $2, 'Yes', 0)", 
                     # right now im gonna do it so 'Yes' just means signed up and 0 means not notified, you would change to 1 once they have been, and then they wont get pinged again that way.
                     uiud, event['eid']
                 )
@@ -347,4 +370,6 @@ async def get_notified(interaction: discord.Interaction, event_number: int):
             )
 
 
+
+>>>>>>> 366400fd8dbe1aaa68716bfc5f8c5998a9b65f8e
 bot.run(os.getenv("DISCORD_TOKEN"))
