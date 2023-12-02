@@ -24,7 +24,7 @@ async def on_ready():
         bot.pool = await asyncpg.create_pool(
             host=os.getenv("HOST"),
             database=os.getenv("DATABASE"),
-            user=os.getenv("USER"),
+            user=os.getenv("USER_NAME"),
             password=os.getenv("PASSWORD")
         )
         synced = await bot.tree.sync()
@@ -296,5 +296,7 @@ async def get_notified(interaction: discord.Interaction, event_number: int):
                 f"Event number {event_number} is either not in this server, or the event number is invalid",
                 ephemeral=True
             )
+
+
 
 bot.run(os.getenv("DISCORD_TOKEN"))
