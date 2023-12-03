@@ -4,6 +4,7 @@ import asyncpg
 from datetime import datetime
 from discord import app_commands
 from discord.ext import commands
+from typing import Optional
 import os
 from tz_convert import local_to_utc, utc_to_local
 from dotenv import load_dotenv
@@ -200,30 +201,20 @@ async def create_group_event(
 
 @bot.tree.command(name="delete_event")
 @app_commands.describe(
-    event_name="Event name"
+    event_id="Event ID"
 )
-async def delete_event(interaction: discord.Interaction, event_name: str):
+async def delete_event(interaction: discord.Interaction, event_id: int):
     uiud = str(interaction.user.id)
     gid = interaction.guild_id
 
     async with bot.pool.acquire() as conn:
         # Check if the event exists
-        event = await conn.fetchrow(
-            """
-            SELECT e.eid, e.meetingname, e.location, e.timestart, e.timeend 
-            FROM event e
-            INNER JOIN scheduled s ON e.eid = s.eid
-            WHERE (e.gid = $1 OR (e.uiud = $2 AND e.gid IS NULL))
-            AND e.meetingname = $3
-            AND s.uiud = $2
-            """,
-            gid, uiud, event_name
-        )
+        event = await conn.fetchrow("SELECT * FROM event WHERE eid = $1 AND uiud = $2", event_id, uiud)
 
         if event:
             # Delete the event and associated entries
-            await conn.execute("DELETE FROM scheduled WHERE eid = $1", event['eid'])
-            await conn.execute("DELETE FROM event WHERE eid = $1", event['eid'])
+            await conn.execute("DELETE FROM scheduled WHERE eid = $1", event_id)
+            await conn.execute("DELETE FROM event WHERE eid = $1", event_id)
 
             await interaction.response.send_message(
                 f"{interaction.user.mention}, event '{event['meetingname']}' has been deleted.",
@@ -231,7 +222,7 @@ async def delete_event(interaction: discord.Interaction, event_name: str):
             )
         else:
             await interaction.response.send_message(
-                f"{interaction.user.mention}, event '{event_name}' not found or you don't have permission to delete it.",
+                f"{interaction.user.mention}, event '{event_id}' not found or you don't have permission to delete it.",
                 ephemeral=True
             )
 
@@ -339,5 +330,65 @@ async def get_notified(interaction: discord.Interaction, event_number: int):
                 ephemeral=True
             )
 
+@bot.tree.command(name="modify_event")
+@app_commands.describe(
+    event_id="ID of the event to modify",
+    new_meetingname="New name for the meeting (optional)",
+    new_location="New location for the event (optional)",
+    new_datestart="New start date for the event in YYYY-MM-DD format (optional)",
+    new_dateend="New end date for the event in YYYY-MM-DD format (optional)",
+    new_timestart="New start time for the event in HH:MM format (optional)",
+    new_timeend="New end time for the event in HH:MM format (optional)"
+)
+async def modify_event(interaction: discord.Interaction,
+    event_id: int,
+    new_meetingname: Optional[str] = None,
+    new_location: Optional[str] = None,
+    new_datestart: Optional[str] = None,
+    new_dateend: Optional[str] = None,
+    new_timestart: Optional[str] = None, 
+    new_timeend: Optional[str] = None):
+    uiud = str(interaction.user.id)
+    async with bot.pool.acquire() as conn:
+        event = await conn.fetchrow("SELECT * FROM event WHERE eid = $1 AND uiud = $2", event_id, uiud)
+        if not event:
+            await interaction.response.send_message("Event not found or you do not have permission to modify this event.", ephemeral=True)
+            return
+
+        fields_to_update = {}
+        if new_meetingname is not None: fields_to_update['meetingname'] = new_meetingname
+        if new_location is not None: fields_to_update['location'] = new_location
+
+        # Handling date and time updates
+        try:
+            if new_datestart or new_timestart:
+                existing_start = event['timestart']
+                new_start_date = new_datestart if new_datestart else existing_start.strftime("%Y-%m-%d")
+                new_start_time = new_timestart if new_timestart else existing_start.strftime("%H:%M:%S")
+                new_eventstart = datetime.strptime(f"{new_start_date} {new_start_time}", "%Y-%m-%d %H:%M:%S")
+                new_eventstart = (new_eventstart)
+                fields_to_update['timestart'] = new_eventstart
+
+            if new_dateend or new_timeend:
+                existing_end = event['timeend']
+                new_end_date = new_dateend if new_dateend else existing_end.strftime("%Y-%m-%d")
+                new_end_time = new_timeend if new_timeend else existing_end.strftime("%H:%M:%S")
+                new_eventend = datetime.strptime(f"{new_end_date} {new_end_time}", "%Y-%m-%d %H:%M:%S")
+                new_eventend = (new_eventend)
+                fields_to_update['timeend'] = new_eventend
+
+        except ValueError as e:
+            await interaction.response.send_message("Invalid date or time format.", ephemeral=True)
+            return
+
+        if fields_to_update:
+            set_parts = [f"{key} = ${i + 1}" for i, key in enumerate(fields_to_update.keys())]
+            values = list(fields_to_update.values())
+            values.append(event_id)
+            update_query = f"UPDATE event SET {', '.join(set_parts)} WHERE eid = ${len(values)}"
+            await conn.execute(update_query, *values)
+            await interaction.response.send_message("Event updated successfully.", ephemeral=True)
+        else:
+            await interaction.response.send_message("No changes specified for the event.", ephemeral=True)
 
 bot.run(os.getenv("DISCORD_TOKEN"))
