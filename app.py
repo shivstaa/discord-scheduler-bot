@@ -9,7 +9,7 @@ from tz_convert import local_to_utc, utc_to_local
 from dotenv import load_dotenv
 
 load_dotenv()
-user = os.getenv("USERNAME"),
+
 intents = discord.Intents.all()
 
 # intents.message_content = True
@@ -24,7 +24,7 @@ async def on_ready():
         bot.pool = await asyncpg.create_pool(
             host=os.getenv("HOST"),
             database=os.getenv("DATABASE"),
-            user=os.getenv("USERNAME"),
+            user=os.getenv("USER_NAME"),
             password=os.getenv("PASSWORD")
         )
         synced = await bot.tree.sync()
