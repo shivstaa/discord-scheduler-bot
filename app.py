@@ -7,17 +7,9 @@ from discord.ext import commands
 import os
 from tz_convert import local_to_utc, utc_to_local
 from dotenv import load_dotenv
-<<<<<<< HEAD
-load_dotenv()
-user = os.getenv("USERNAME"),
-||||||| 86d9427
-load_dotenv()
-
-=======
 
 load_dotenv()
 user = os.getenv("USERNAME"),
->>>>>>> origin/deleteevent
 intents = discord.Intents.all()
 
 # intents.message_content = True
@@ -32,14 +24,7 @@ async def on_ready():
         bot.pool = await asyncpg.create_pool(
             host=os.getenv("HOST"),
             database=os.getenv("DATABASE"),
-<<<<<<< HEAD
             user=os.getenv("USERNAME"),
-||||||| 86d9427
-            user=os.getenv("USER"),
-=======
-            user=os.getenv("USERNAME"),
-            # user=os.getenv("USER_NAME"),
->>>>>>> origin/deleteevent
             password=os.getenv("PASSWORD")
         )
         synced = await bot.tree.sync()
@@ -54,26 +39,11 @@ async def on_ready():
 
 @bot.tree.command(name="create_private_event")
 @app_commands.describe(
-<<<<<<< HEAD
-    event_name="Event name",
-    event_start_date="Event Start Date",
-    event_end_date="Event End Date",
-    event_start_time="Event Start Time",
-    event_end_time="Event End Time",
-||||||| 86d9427
-    event_name="Event name", 
-    event_start_date="Event Start Date", 
-    event_end_date="Event End Date", 
-    event_start_time="Event Start Time", 
-    event_end_time="Event End Time",
-=======
-
     event_name="Event name",
     event_start_date="Event Start Date (YYYY-MM-DD)",
     event_end_date="Event End Date (YYYY-MM-DD)",
     event_start_time="Event Start Time (HH:MM:SS)",
     event_end_time="Event End Time (HH:MM:SS)",
->>>>>>> origin/deleteevent
     event_location="Event Location"
 )
 async def create_private_event(
@@ -110,7 +80,7 @@ async def create_private_event(
             """
             SELECT * FROM event
             WHERE uiud = $1
-            AND timestart < $3
+            AND timestart < $3 
             AND timeend > $2
             """,
             uiud, event_start, event_end
@@ -128,7 +98,7 @@ async def create_private_event(
         if eid:
             await conn.execute(
                 """
-                INSERT INTO scheduled (uiud, eid, status, notification)
+                INSERT INTO scheduled (uiud, eid, status, notification) 
                 VALUES ($1, $2, 'Yes', 0)
                 """,
                 uiud, eid
@@ -146,26 +116,11 @@ async def create_private_event(
 
 @bot.tree.command(name="create_group_event")
 @app_commands.describe(
-<<<<<<< HEAD
-    event_name="Event name",
-    event_start_date="Event Start Date",
-    event_end_date="Event End Date",
-    event_start_time="Event Start Time",
-    event_end_time="Event End Time",
-||||||| 86d9427
-    event_name="Event name", 
-    event_start_date="Event Start Date", 
-    event_end_date="Event End Date", 
-    event_start_time="Event Start Time", 
-    event_end_time="Event End Time",
-=======
     event_name="Event name",
     event_start_date="Event Start Date (YYYY-MM-DD)",
     event_end_date="Event End Date (YYYY-MM-DD)",
     event_start_time="Event Start Time (HH:MM:SS)",
     event_end_time="Event End Time (HH:MM:SS)",
-
->>>>>>> origin/deleteevent
     event_location="Event Location"
 )
 async def create_group_event(
@@ -186,25 +141,13 @@ async def create_group_event(
     uiud = str(interaction.user.id)
     user_name = interaction.user.name
     try:
-<<<<<<< HEAD
         event_start = datetime.strptime(
             f"{event_start_date} {event_start_time}", "%Y-%m-%d %H:%M:%S")
         event_end = datetime.strptime(
             f"{event_end_date} {event_end_time}", "%Y-%m-%d %H:%M:%S")
-||||||| 86d9427
-        event_start = datetime.strptime(f"{event_start_date} {event_start_time}", "%Y-%m-%d %H:%M:%S")
-        event_end = datetime.strptime(f"{event_end_date} {event_end_time}", "%Y-%m-%d %H:%M:%S")
-=======
-        event_start = datetime.strptime(
-            f"{event_start_date} {event_start_time}", "%Y-%m-%d %H:%M:%S")
-        event_end = datetime.strptime(
-            f"{event_end_date} {event_end_time}", "%Y-%m-%d %H:%M:%S")
-
         # convert to UTC
         event_start, event_end = local_to_utc(
             event_start), local_to_utc(event_end)
-
->>>>>>> origin/deleteevent
     except ValueError as e:
         await interaction.response.send_message(
             "Invalid timestamps, please make sure your timestamps follow the format (YYYY-MM-DD) for date and (HH:MM:SS) for time.",
@@ -328,13 +271,7 @@ async def show_events(interaction: discord.Interaction):
         await interaction.response.send_message(response, ephemeral=True)
 
 
-<<<<<<< HEAD
-||||||| 86d9427
-    
-
-=======
 # shows all server events so a user can potentially sign up for it
-
 @bot.tree.command(name="show_server_events")
 async def show_server_events(interaction: discord.Interaction):
     if interaction.guild_id is None:
@@ -404,5 +341,4 @@ async def get_notified(interaction: discord.Interaction, event_number: int):
             )
 
 
->>>>>>> origin/deleteevent
 bot.run(os.getenv("DISCORD_TOKEN"))
