@@ -4,6 +4,7 @@ import asyncpg
 from datetime import datetime
 from discord import app_commands
 from discord.ext import commands
+from typing import Optional
 import os
 from tz_convert import local_to_utc, utc_to_local
 from dotenv import load_dotenv
@@ -201,30 +202,20 @@ async def create_group_event(
 
 @bot.tree.command(name="delete_event")
 @app_commands.describe(
-    event_name="Event name"
+    event_id="Event ID"
 )
-async def delete_event(interaction: discord.Interaction, event_name: str):
+async def delete_event(interaction: discord.Interaction, event_id: int):
     uiud = str(interaction.user.id)
     gid = interaction.guild_id
 
     async with bot.pool.acquire() as conn:
         # Check if the event exists
-        event = await conn.fetchrow(
-            """
-            SELECT e.eid, e.meetingname, e.location, e.timestart, e.timeend 
-            FROM event e
-            INNER JOIN scheduled s ON e.eid = s.eid
-            WHERE (e.gid = $1 OR (e.uiud = $2 AND e.gid IS NULL))
-            AND e.meetingname = $3
-            AND s.uiud = $2
-            """,
-            gid, uiud, event_name
-        )
+        event = await conn.fetchrow("SELECT * FROM event WHERE eid = $1 AND uiud = $2", event_id, uiud)
 
         if event:
             # Delete the event and associated entries
-            await conn.execute("DELETE FROM scheduled WHERE eid = $1", event['eid'])
-            await conn.execute("DELETE FROM event WHERE eid = $1", event['eid'])
+            await conn.execute("DELETE FROM scheduled WHERE eid = $1", event_id)
+            await conn.execute("DELETE FROM event WHERE eid = $1", event_id)
 
             await interaction.response.send_message(
                 f"{interaction.user.mention}, event '{event['meetingname']}' has been deleted.",
@@ -232,7 +223,7 @@ async def delete_event(interaction: discord.Interaction, event_name: str):
             )
         else:
             await interaction.response.send_message(
-                f"{interaction.user.mention}, event '{event_name}' not found or you don't have permission to delete it.",
+                f"{interaction.user.mention}, event '{event_id}' not found or you don't have permission to delete it.",
                 ephemeral=True
             )
 
