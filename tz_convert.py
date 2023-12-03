@@ -3,9 +3,11 @@ import tzlocal
 
 
 def local_to_utc(user_time):
-    user_time = datetime.strptime(user_time, '%H:%M:%S')
+    # parse it into a datetime object
+    if isinstance(user_time, str):
+        user_time = datetime.strptime(user_time, '%H:%M:%S')
 
-    # Get local time
+    # Get local time zone
     local_tz = tzlocal.get_localzone()
     local_time = user_time.replace(tzinfo=local_tz)
 
