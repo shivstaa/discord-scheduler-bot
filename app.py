@@ -3,7 +3,7 @@ import discord
 import asyncpg
 from datetime import datetime
 from discord import app_commands
-from discord.ext import commands
+from discord.ext import commands, tasks
 from discord.ui import Modal, Button, View, TextInput
 from discord import ButtonStyle
 from typing import Optional
@@ -29,11 +29,44 @@ async def on_ready():
             user=os.getenv("USER_NAME"),
             password=os.getenv("PASSWORD")
         )
+        if not print_user_events.is_running():
+            print_user_events.start()
         synced = await bot.tree.sync()
         print(f"Synced {len(synced)} command(s)")
 
     except Exception as e:
         print(e)
+
+
+
+
+@tasks.loop(seconds=60)
+async def print_user_events():
+    uiud = "222088221318709248"
+    channel = bot.get_channel(1174478760666464337)
+
+    if channel is None:
+        print("Invalid channel ID.")
+        return
+
+    async with bot.pool.acquire() as conn:
+        events = await conn.fetch(
+            """
+            SELECT eid, meetingname, location, timestart, timeend FROM event WHERE uiud = $1
+            """,
+            uiud
+        )
+
+        message_intro = "This is a test function that runs a task which queries the bot every minute:\n"
+        if events:
+            # Construct the message to be sent
+            events_message = "\n".join(
+                f"Event: {row['meetingname']} at {row['location']}, from {row['timestart']} to {row['timeend']}"
+                for row in events
+            )
+            await channel.send(message_intro + events_message)
+        else:
+            await channel.send(message_intro + f"No events scheduled for user with ID {uiud}.")
 
 
 class CreatePrivateView(discord.ui.View):
