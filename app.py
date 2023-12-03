@@ -8,6 +8,7 @@ from discord.ui import Modal, Button, View, TextInput
 from discord import ButtonStyle
 from typing import Optional
 import os
+import timedelta
 from tz_convert import local_to_utc, utc_to_local
 from dotenv import load_dotenv
 
@@ -26,7 +27,7 @@ async def on_ready():
         bot.pool = await asyncpg.create_pool(
             host=os.getenv("HOST"),
             database=os.getenv("DATABASE"),
-            user=os.getenv("USER_NAME"),
+            user=os.getenv("USERNAME"),
             password=os.getenv("PASSWORD")
         )
         synced = await bot.tree.sync()
@@ -426,5 +427,36 @@ async def modify_event(interaction: discord.Interaction,
             await interaction.response.send_message("Event updated successfully.", ephemeral=True)
         else:
             await interaction.response.send_message("No changes specified for the event.", ephemeral=True)
+
+
+async def send_event_notifications():
+    await bot.wait_until_ready()  # Wait until the bot is fully connected
+
+    while not bot.is_closed():
+        # Your database query to get events that need notifications
+        async with bot.pool.acquire() as conn:
+            current_time = datetime.utcnow()
+            upcoming_events = await conn.fetch(
+                """
+                SELECT e.eid, e.meetingname, e.timestart, s.uiud
+                FROM event e
+                INNER JOIN scheduled s ON e.eid = s.eid
+                WHERE e.timestart > $1 AND e.timestart < $2 AND s.notification = 0
+                """,
+                current_time, current_time + timedelta(minutes=13)
+            )
+
+            for event in upcoming_events:
+                user = await bot.fetch_user(int(event['uiud']))
+                if user:
+                    await user.send(f"Reminder: Your event '{event['meetingname']}' is starting soon!")
+
+                    # Update notification status to avoid sending multiple notifications
+                    await conn.execute("UPDATE scheduled SET notification = 1 WHERE eid = $1 AND uiud = $2", event['eid'], event['uiud'])
+
+        await asyncio.sleep(60)  # Check every minute, adjust as needed
+
+# Start the background task
+
 
 bot.run(os.getenv("DISCORD_TOKEN"))
