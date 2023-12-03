@@ -4,6 +4,8 @@ import asyncpg
 from datetime import datetime
 from discord import app_commands
 from discord.ext import commands
+from discord.ui import Modal, Button, View, TextInput
+from discord import ButtonStyle
 from typing import Optional
 import os
 from tz_convert import local_to_utc, utc_to_local
@@ -34,17 +36,77 @@ async def on_ready():
         print(e)
 
 
+class CreatePrivateView(discord.ui.View):
+    def __init__(self, event_details, uiud, user_name, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.event_details = event_details
+        self.uiud = uiud
+        self.user_name = user_name
+        self.future = asyncio.Future()
+
+    @discord.ui.button(label="Submit", style=discord.ButtonStyle.green)
+    async def submit_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        event_name = self.event_details['event_name']
+        event_location = self.event_details['event_location']
+        event_start = f"{self.event_details['event_start_date']} {self.event_details['event_start_time']}"
+        event_end = f"{self.event_details['event_end_date']} {self.event_details['event_end_time']}"
+
+        try:
+            event_start = datetime.strptime(event_start, "%Y-%m-%d %H:%M:%S")
+            event_end = datetime.strptime(event_end, "%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            await interaction.response.send_message(
+                "Invalid timestamps, please make sure your timestamps follow the format (YYYY-MM-DD) for date and (HH:MM:SS) for time.", ephemeral=True)
+            self.future.set_result(True)
+            return
+
+        async with bot.pool.acquire() as conn:
+            user = await conn.fetchrow("SELECT * FROM \"user\" WHERE uiud = $1", self.uiud)
+            if user is None:
+                await conn.execute("INSERT INTO \"user\" (uiud, name) VALUES ($1, $2)", self.uiud, self.user_name)
+
+            overlap = await conn.fetchrow(
+                "SELECT * FROM event WHERE uiud = $1 AND timestart < $3 AND timeend > $2",
+                self.uiud, event_start, event_end)
+
+            if overlap:
+                await interaction.response.send_message(f"{interaction.user.mention}, there is an overlapping event.", ephemeral=True)
+                self.future.set_result(True)
+                return
+
+            eid = await conn.fetchval(
+                "INSERT INTO event (uiud, meetingname, location, timestart, timeend) VALUES ($1, $2, $3, $4, $5) RETURNING eid",
+                self.uiud, event_name, event_location, event_start, event_end)
+
+            if eid:
+                await conn.execute(
+                    "INSERT INTO scheduled (uiud, eid, status, notification) VALUES ($1, $2, 'Yes', 0)",
+                    self.uiud, eid)
+                await interaction.response.send_message(
+                    f"{interaction.user.mention}, {event_name} at {event_location} has been scheduled for {self.event_details['event_start_date']} from {self.event_details['event_start_time']} to {self.event_details['event_end_time']}.", ephemeral=True)
+
+            else:
+                await interaction.response.send_message(
+                    f"{interaction.user.mention}, there was an issue creating the event.", ephemeral=True)
+
+        self.future.set_result(True)
+
+    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.grey)
+    async def cancel_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_message("Operation canceled.", ephemeral=True)
+
+        self.future.set_result(True)
+
+
 # create private event
-
-
 @bot.tree.command(name="create_private_event")
 @app_commands.describe(
     event_name="Event name",
+    event_location="Event Location",
     event_start_date="Event Start Date (YYYY-MM-DD)",
     event_end_date="Event End Date (YYYY-MM-DD)",
     event_start_time="Event Start Time (HH:MM:SS)",
-    event_end_time="Event End Time (HH:MM:SS)",
-    event_location="Event Location"
+    event_end_time="Event End Time (HH:MM:SS)"
 )
 async def create_private_event(
     interaction: discord.Interaction,
@@ -55,65 +117,31 @@ async def create_private_event(
     event_start_time: str,
     event_end_time: str
 ):
+    event_details = {
+        'event_name': event_name,
+        'event_location': event_location,
+        'event_start_date': event_start_date,
+        'event_end_date': event_end_date,
+        'event_start_time': event_start_time,
+        'event_end_time': event_end_time
+    }
     uiud = str(interaction.user.id)
     user_name = interaction.user.name
-    event_start = f"{event_start_date} {event_start_time}"
-    event_end = f"{event_end_date} {event_end_time}"
+
+    view = CreatePrivateView(
+        event_details=event_details, uiud=uiud, user_name=user_name)
+    await interaction.response.send_message(f"Please confirm the event creation:\n Event: {event_name} \n Location: {event_location} \n Dates: {event_start_date} to {event_end_date} \n Time: {event_start_time} to {event_end_time}.", view=view, ephemeral=True)
+    await view.future
     try:
-        event_start = datetime.strptime(
-            f"{event_start_date} {event_start_time}", "%Y-%m-%d %H:%M:%S")
-        event_end = datetime.strptime(
-            f"{event_end_date} {event_end_time}", "%Y-%m-%d %H:%M:%S")
-    except ValueError as e:
-        await interaction.response.send_message(
-            "Invalid timestamps, please make sure your timestamps follow the format (YYYY-MM-DD) for date and (HH:MM:SS) for time.",
-            ephemeral=True
-        )
-        return
-    async with bot.pool.acquire() as conn:
+        await interaction.delete_original_response()
+    except discord.NotFound:
+        # Message might be already deleted, ignore this exception
+        pass
+    except Exception as e:
+        print(f"Error in deleting message after submit: {e}")
 
-        user = await conn.fetchrow("SELECT * FROM \"user\" WHERE uiud = $1", uiud)
-        if user is None:
-            await conn.execute("INSERT INTO \"user\" (uiud, name) VALUES ($1, $2)", uiud, user_name)
-
-        overlap = await conn.fetchrow(
-            """
-            SELECT * FROM event
-            WHERE uiud = $1
-            AND timestart < $3 
-            AND timeend > $2
-            """,
-            uiud, event_start, event_end
-        )
-        if overlap:
-            await interaction.response.send_message(
-                f"{interaction.user.mention}, there is an overlapping event."
-            )
-            return
-
-        eid = await conn.fetchval(
-            "INSERT INTO event (uiud, meetingname, location, timestart, timeend) VALUES ($1, $2, $3, $4, $5) RETURNING eid",
-            uiud, event_name, event_location, event_start, event_end
-        )
-        if eid:
-            await conn.execute(
-                """
-                INSERT INTO scheduled (uiud, eid, status, notification) 
-                VALUES ($1, $2, 'Yes', 0)
-                """,
-                uiud, eid
-            )
-            await interaction.response.send_message(
-                f"{interaction.user.mention}, {event_name} at {event_location} has been scheduled for {event_start_date} from {event_start_time} to {event_end_time}.", ephemeral=True
-            )
-        else:
-            await interaction.response.send_message(
-                f"{interaction.user.mention}, there was an issue creating the event.", ephemeral=True
-            )
 
 # create group event
-
-
 @bot.tree.command(name="create_group_event")
 @app_commands.describe(
     event_name="Event name",
@@ -196,9 +224,8 @@ async def create_group_event(
                 ephemeral=True
             )
 
+
 # delete event
-
-
 @bot.tree.command(name="delete_event")
 @app_commands.describe(
     event_id="Event ID"
@@ -242,7 +269,6 @@ async def show_events(interaction: discord.Interaction):
                 SELECT e.eid, e.meetingname, e.location, e.timestart, e.timeend 
                 FROM event e
                 INNER JOIN scheduled s ON e.eid = s.eid
-                WHERE e.gid = $1 AND s.uiud = $2
                 """, gid, uiud
             )
         else:
@@ -330,6 +356,7 @@ async def get_notified(interaction: discord.Interaction, event_number: int):
                 ephemeral=True
             )
 
+
 @bot.tree.command(name="modify_event")
 @app_commands.describe(
     event_id="ID of the event to modify",
@@ -341,13 +368,13 @@ async def get_notified(interaction: discord.Interaction, event_number: int):
     new_timeend="New end time for the event in HH:MM format (optional)"
 )
 async def modify_event(interaction: discord.Interaction,
-    event_id: int,
-    new_meetingname: Optional[str] = None,
-    new_location: Optional[str] = None,
-    new_datestart: Optional[str] = None,
-    new_dateend: Optional[str] = None,
-    new_timestart: Optional[str] = None, 
-    new_timeend: Optional[str] = None):
+                       event_id: int,
+                       new_meetingname: Optional[str] = None,
+                       new_location: Optional[str] = None,
+                       new_datestart: Optional[str] = None,
+                       new_dateend: Optional[str] = None,
+                       new_timestart: Optional[str] = None,
+                       new_timeend: Optional[str] = None):
     uiud = str(interaction.user.id)
     async with bot.pool.acquire() as conn:
         event = await conn.fetchrow("SELECT * FROM event WHERE eid = $1 AND uiud = $2", event_id, uiud)
@@ -356,24 +383,32 @@ async def modify_event(interaction: discord.Interaction,
             return
 
         fields_to_update = {}
-        if new_meetingname is not None: fields_to_update['meetingname'] = new_meetingname
-        if new_location is not None: fields_to_update['location'] = new_location
+        if new_meetingname is not None:
+            fields_to_update['meetingname'] = new_meetingname
+        if new_location is not None:
+            fields_to_update['location'] = new_location
 
         # Handling date and time updates
         try:
             if new_datestart or new_timestart:
                 existing_start = event['timestart']
-                new_start_date = new_datestart if new_datestart else existing_start.strftime("%Y-%m-%d")
-                new_start_time = new_timestart if new_timestart else existing_start.strftime("%H:%M:%S")
-                new_eventstart = datetime.strptime(f"{new_start_date} {new_start_time}", "%Y-%m-%d %H:%M:%S")
+                new_start_date = new_datestart if new_datestart else existing_start.strftime(
+                    "%Y-%m-%d")
+                new_start_time = new_timestart if new_timestart else existing_start.strftime(
+                    "%H:%M:%S")
+                new_eventstart = datetime.strptime(
+                    f"{new_start_date} {new_start_time}", "%Y-%m-%d %H:%M:%S")
                 new_eventstart = (new_eventstart)
                 fields_to_update['timestart'] = new_eventstart
 
             if new_dateend or new_timeend:
                 existing_end = event['timeend']
-                new_end_date = new_dateend if new_dateend else existing_end.strftime("%Y-%m-%d")
-                new_end_time = new_timeend if new_timeend else existing_end.strftime("%H:%M:%S")
-                new_eventend = datetime.strptime(f"{new_end_date} {new_end_time}", "%Y-%m-%d %H:%M:%S")
+                new_end_date = new_dateend if new_dateend else existing_end.strftime(
+                    "%Y-%m-%d")
+                new_end_time = new_timeend if new_timeend else existing_end.strftime(
+                    "%H:%M:%S")
+                new_eventend = datetime.strptime(
+                    f"{new_end_date} {new_end_time}", "%Y-%m-%d %H:%M:%S")
                 new_eventend = (new_eventend)
                 fields_to_update['timeend'] = new_eventend
 
@@ -382,7 +417,8 @@ async def modify_event(interaction: discord.Interaction,
             return
 
         if fields_to_update:
-            set_parts = [f"{key} = ${i + 1}" for i, key in enumerate(fields_to_update.keys())]
+            set_parts = [f"{key} = ${i + 1}" for i,
+                         key in enumerate(fields_to_update.keys())]
             values = list(fields_to_update.values())
             values.append(event_id)
             update_query = f"UPDATE event SET {', '.join(set_parts)} WHERE eid = ${len(values)}"
