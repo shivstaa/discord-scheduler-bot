@@ -3,7 +3,7 @@ import discord
 import asyncpg
 from datetime import datetime
 from discord import app_commands
-from discord.ext import commands
+from discord.ext import commands, tasks
 from discord.ui import Modal, Button, View, TextInput
 from discord import ButtonStyle
 from typing import Optional
@@ -140,6 +140,74 @@ async def create_private_event(
     except Exception as e:
         print(f"Error in deleting message after submit: {e}")
 
+class CreateServerView(discord.ui.View):
+    def __init__(self, event_details, uiud, user_name, gid, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.event_details = event_details
+        self.uiud = uiud
+        self.user_name = user_name
+        self.gid = gid
+        self.future = asyncio.Future()
+
+    @discord.ui.button(label="Submit", style=discord.ButtonStyle.green)
+    async def submit_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        # Extract event details
+        event_name = self.event_details['event_name']
+        event_location = self.event_details['event_location']
+        event_start = f"{self.event_details['event_start_date']} {self.event_details['event_start_time']}"
+        event_end = f"{self.event_details['event_end_date']} {self.event_details['event_end_time']}"
+
+        # Parse date and time
+        try:
+            event_start = datetime.strptime(event_start, "%Y-%m-%d %H:%M:%S")
+            event_end = datetime.strptime(event_end, "%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            await interaction.response.send_message(
+                "Invalid timestamps, please make sure your timestamps follow the format (YYYY-MM-DD) for date and (HH:MM:SS) for time.",
+                ephemeral=True)
+            self.future.set_result(True)
+            return
+
+        # Database operations
+        async with bot.pool.acquire() as conn:
+            # Check for overlapping events
+            overlap = await conn.fetchrow(
+                "SELECT * FROM event WHERE gid = $1 AND timestart < $3 AND timeend > $2",
+                self.gid, event_start, event_end)
+
+            if overlap:
+                await interaction.response.send_message(
+                    f"{interaction.user.mention}, there is an overlapping event.",
+                    ephemeral=True)
+                self.future.set_result(True)
+                return
+
+            # Insert new event
+            eid = await conn.fetchval(
+                "INSERT INTO event (uiud, gid, meetingname, location, timestart, timeend) VALUES ($1, $2, $3, $4, $5, $6) RETURNING eid",
+                self.uiud, self.gid, event_name, event_location, event_start, event_end)
+
+            if eid:
+                await conn.execute(
+                    "INSERT INTO scheduled (uiud, eid, status, notification) VALUES ($1, $2, 'Yes', 0)",
+                    self.uiud, eid)
+                await interaction.response.send_message(
+                    f"{interaction.user.mention}, {event_name} at {event_location} has been scheduled for {self.event_details['event_start_date']} from {self.event_details['event_start_time']} to {self.event_details['event_end_time']}.",
+                    ephemeral=True)
+
+            else:
+                await interaction.response.send_message(
+                    f"{interaction.user.mention}, there was an issue creating the event.",
+                    ephemeral=True)
+
+            self.future.set_result(True)
+
+    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.grey)
+    async def cancel_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_message("Operation canceled.", ephemeral=True)
+        self.future.set_result(True)
+
+
 
 # create group event
 @bot.tree.command(name="create_group_event")
@@ -165,64 +233,37 @@ async def create_group_event(
         return
 
     gid = interaction.guild_id
-    guild_name = interaction.guild.name
     uiud = str(interaction.user.id)
     user_name = interaction.user.name
+
+    event_details = {
+        'event_name': event_name,
+        'event_location': event_location,
+        'event_start_date': event_start_date,
+        'event_end_date': event_end_date,
+        'event_start_time': event_start_time,
+        'event_end_time': event_end_time
+    }
+
+    view = CreateServerView(
+        event_details=event_details,
+        uiud=uiud,
+        user_name=user_name,
+        gid=gid
+    )
+    await interaction.response.send_message(
+        f"Please confirm the server event creation:\n Event: {event_name} \n Location: {event_location} \n Dates: {event_start_date} to {event_end_date} \n Time: {event_start_time} to {event_end_time}.",
+        view=view, ephemeral=True
+    )
+    await view.future
     try:
-        event_start = datetime.strptime(
-            f"{event_start_date} {event_start_time}", "%Y-%m-%d %H:%M:%S")
-        event_end = datetime.strptime(
-            f"{event_end_date} {event_end_time}", "%Y-%m-%d %H:%M:%S")
-        # convert to UTC
-        event_start, event_end = local_to_utc(
-            event_start), local_to_utc(event_end)
-    except ValueError as e:
-        await interaction.response.send_message(
-            "Invalid timestamps, please make sure your timestamps follow the format (YYYY-MM-DD) for date and (HH:MM:SS) for time.",
-            ephemeral=True
-        )
-        return
+        await interaction.delete_original_response()
+    except discord.NotFound:
+        # Message might be already deleted, ignore this exception
+        pass
+    except Exception as e:
+        print(f"Error in deleting message after submit: {e}")
 
-    async with bot.pool.acquire() as conn:
-        # Check if the user exists
-        user = await conn.fetchrow("SELECT * FROM \"user\" WHERE uiud = $1", uiud)
-        if user is None:
-            await conn.execute("INSERT INTO \"user\" (uiud, name) VALUES ($1, $2)", uiud, user_name)
-
-        group = await conn.fetchrow("SELECT * FROM \"group\" WHERE gid = $1", gid)
-        if group is None:
-            await conn.execute("INSERT INTO \"group\" (gid, groupname) VALUES ($1, $2)", gid, guild_name)
-
-        usergroup = await conn.fetchrow(
-            "SELECT * FROM usergroup WHERE uiud = $1 AND gid = $2",
-            uiud, gid
-        )
-        if usergroup is None:
-            await conn.execute(
-                "INSERT INTO usergroup (uiud, gid) VALUES ($1, $2)",
-                uiud, gid
-            )
-
-        eid = await conn.fetchval(
-            "INSERT INTO event (uiud, gid, meetingname, location, timestart, timeend) VALUES ($1, $2, $3, $4, $5, $6) RETURNING eid",
-            uiud, gid, event_name, event_location, event_start, event_end
-        )
-        if eid:
-            await conn.execute(
-                """
-                INSERT INTO scheduled (uiud, eid, status, notification) 
-                VALUES ($1, $2, 'Yes', 0)
-                """,
-                uiud, eid
-            )
-            await interaction.response.send_message(
-                f"{interaction.user.mention}, {event_name} at {event_location} has been scheduled for {event_start_date} from {event_start_time} to {event_end_time} for the group {guild_name}."
-            )
-        else:
-            await interaction.response.send_message(
-                f"{interaction.user.mention}, there was an issue creating the group event.",
-                ephemeral=True
-            )
 
 
 # delete event
