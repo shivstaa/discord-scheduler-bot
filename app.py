@@ -8,8 +8,9 @@ from discord.ui import Modal, Button, View, TextInput
 from discord import ButtonStyle
 from typing import Optional
 import os
-from tz_convert import local_to_utc, utc_to_local
+from tz_convert import local_to_utc, utc_to_local, time_format_locale, date_format, find_timezone, convert_locale
 from dotenv import load_dotenv
+import pytz
 
 load_dotenv()
 intents = discord.Intents.all()
@@ -33,15 +34,16 @@ async def on_ready():
         print(f"Synced {len(synced)} command(s)")
 
     except Exception as e:
-        print(e)
+        print("Error ", e)
 
 
 class CreatePrivateView(discord.ui.View):
-    def __init__(self, event_details, uiud, user_name, *args, **kwargs):
+    def __init__(self, event_details, uiud, user_name, timezone, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.event_details = event_details
         self.uiud = uiud
         self.user_name = user_name
+        self.timezone = timezone
         self.future = asyncio.Future()
 
     @discord.ui.button(label="Submit", style=discord.ButtonStyle.green)
@@ -65,15 +67,6 @@ class CreatePrivateView(discord.ui.View):
             if user is None:
                 await conn.execute("INSERT INTO \"user\" (uiud, name) VALUES ($1, $2)", self.uiud, self.user_name)
 
-            overlap = await conn.fetchrow(
-                "SELECT * FROM event WHERE uiud = $1 AND timestart < $3 AND timeend > $2",
-                self.uiud, event_start, event_end)
-
-            if overlap:
-                await interaction.response.send_message(f"{interaction.user.mention}, there is an overlapping event.", ephemeral=True)
-                self.future.set_result(True)
-                return
-
             eid = await conn.fetchval(
                 "INSERT INTO event (uiud, meetingname, location, timestart, timeend) VALUES ($1, $2, $3, $4, $5) RETURNING eid",
                 self.uiud, event_name, event_location, event_start, event_end)
@@ -85,7 +78,7 @@ class CreatePrivateView(discord.ui.View):
                 role_name = f"Event {eid}"
                 await notification_role(interaction.guild, interaction.user.id, role_name)
                 await interaction.response.send_message(
-                    f"{interaction.user.mention}, {event_name} at {event_location} has been scheduled for {self.event_details['event_start_date']} from {self.event_details['event_start_time']} to {self.event_details['event_end_time']}.", ephemeral=True)
+                    f"{interaction.user.mention}, {event_name} at {event_location} has been scheduled for {date_format(self.event_details['event_start_date'])} to {date_format(self.event_details['event_end_date'])} from {convert_locale(self.event_details['event_start_time'], self.timezone)} to {convert_locale(self.event_details['event_end_time'], self.timezone)}.", ephemeral=True)
 
             else:
                 await interaction.response.send_message(
@@ -101,12 +94,13 @@ class CreatePrivateView(discord.ui.View):
 
 
 class CreateServerView(discord.ui.View):
-    def __init__(self, event_details, uiud, user_name, gid, *args, **kwargs):
+    def __init__(self, event_details, uiud, user_name, gid, timezone, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.event_details = event_details
         self.uiud = uiud
         self.user_name = user_name
         self.gid = gid
+        self.timezone = timezone
         self.future = asyncio.Future()
 
     @discord.ui.button(label="Submit", style=discord.ButtonStyle.green)
@@ -152,8 +146,7 @@ class CreateServerView(discord.ui.View):
                     "INSERT INTO scheduled (uiud, eid, status, notification) VALUES ($1, $2, 'Yes', 0)",
                     self.uiud, eid)
                 await interaction.response.send_message(
-                    f"{interaction.user.mention}, {event_name} at {event_location} has been scheduled for {self.event_details['event_start_date']} from {self.event_details['event_start_time']} to {self.event_details['event_end_time']}.",
-                    ephemeral=True)
+                    f"{interaction.user.mention}, {event_name} at {event_location} has been scheduled for {date_format(self.event_details['event_start_date'])} to {date_format(self.event_details['event_end_date'])} from {convert_locale(self.event_details['event_start_time'], self.timezone)} to {convert_locale(self.event_details['event_end_time'], self.timezone)}.", ephemeral=True)
 
             else:
                 await interaction.response.send_message(
@@ -166,6 +159,93 @@ class CreateServerView(discord.ui.View):
     async def cancel_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_message("Operation canceled.", ephemeral=True)
         self.future.set_result(True)
+
+
+class DeleteView(discord.ui.View):
+    def __init__(self, interaction: discord.Interaction, event_id: int, event_name: str, bot):
+        super().__init__(timeout=180)
+        self.interaction = interaction
+        self.event_id = event_id
+        self.event_name = event_name
+        self.bot = bot
+        self.value = None
+
+    @discord.ui.button(label="Confirm", style=discord.ButtonStyle.green)
+    async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.interaction.user.id:
+            await interaction.response.send_message("You are not authorized to perform this action.", ephemeral=True)
+            return
+
+        async with self.bot.pool.acquire() as conn:
+            # Delete the event
+            await conn.execute("DELETE FROM scheduled WHERE eid = $1", self.event_id)
+            await conn.execute("DELETE FROM event WHERE eid = $1", self.event_id)
+
+            server = self.interaction.guild
+            if server:
+                role_name = f"Event {self.event_id}"
+                role = discord.utils.get(server.roles, name=role_name)
+                if role:
+                    try:
+                        await role.delete(reason=f"Event {self.event_id} deleted")
+                    except discord.Forbidden:
+                        await interaction.response.send_message("The bot does not have permissions to delete roles, and the notification role has not been deleted. Please contact your server admins for help.", ephemeral=True)
+                        return
+                    except discord.HTTPException as e:
+                        await interaction.response.send_message(f"Failed to delete notification role: {e}, please notify your admins to delete this role.", ephemeral=True)
+                        return
+
+            await interaction.response.send_message(f"Event '{self.event_name}' has been successfully deleted.", ephemeral=True)
+        self.value = True
+        self.stop()
+
+    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.grey)
+    async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.value = False
+        self.stop()
+
+
+class PaginationView(View):
+    def __init__(self, data, embed_creator, interaction):
+        super().__init__()
+        self.data = data
+        self.embed_creator = embed_creator
+        self.interaction = interaction
+        self.current_page = 0
+        self.total_pages = len(data)
+
+        # Previous button
+        self.previous_button = Button(
+            label='Previous', style=discord.ButtonStyle.grey, disabled=True)
+        self.previous_button.callback = self.on_previous
+        self.add_item(self.previous_button)
+
+        # Next button
+        self.next_button = Button(
+            label='Next', style=discord.ButtonStyle.grey, disabled=self.total_pages <= 1)
+        self.next_button.callback = self.on_next
+        self.add_item(self.next_button)
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        return interaction.user.id == self.interaction.user.id
+
+    async def on_previous(self, interaction: discord.Interaction):
+        # Move to prev page and update embed/buttons
+        if self.current_page > 0:
+            self.current_page -= 1
+            embed = self.embed_creator(self.data[self.current_page])
+            self.previous_button.disabled = self.current_page == 0
+            self.next_button.disabled = self.current_page == self.total_pages - 1
+            await interaction.response.edit_message(embed=embed, view=self)
+
+    async def on_next(self, interaction: discord.Interaction):
+        # Move to next page and update embed/buttons
+        if self.current_page < self.total_pages - 1:
+            self.current_page += 1
+            embed = self.embed_creator(self.data[self.current_page])
+            self.previous_button.disabled = self.current_page == 0
+            self.next_button.disabled = self.current_page == self.total_pages - 1
+            await interaction.response.edit_message(embed=embed, view=self)
 
 
 # create private event
@@ -207,13 +287,17 @@ async def create_private_event(
     embed.add_field(name="📧 Event", value=event_name, inline=False)
     embed.add_field(name="📍 Location", value=event_location, inline=False)
     embed.add_field(
-        name="📅 Dates", value=f"{event_start_date} to {event_end_date}", inline=False)
+        name="📅 Dates", value=f"{date_format(event_start_date)} to {date_format(event_end_date)}", inline=False)
     embed.add_field(
         name="⏰ Time", value=f"{event_start_time} to {event_end_time}", inline=False)
 
+    # Questionable if this even works...
+    embed.timestamp = datetime.now()
+    timezone = find_timezone(embed.timestamp)
+
     # Sending the embed
     view = CreatePrivateView(
-        event_details=event_details, uiud=uiud, user_name=user_name)
+        event_details=event_details, uiud=uiud, user_name=user_name, timezone=timezone)
     await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
     await view.future
@@ -270,15 +354,19 @@ async def create_group_event(
     embed.add_field(name="📧 Event", value=event_name, inline=False)
     embed.add_field(name="📍 Location", value=event_location, inline=False)
     embed.add_field(
-        name="📅 Dates", value=f"{event_start_date} to {event_end_date}", inline=False)
+        name="📅 Dates", value=f"{date_format(event_start_date)} to {date_format(event_end_date)}", inline=False)
     embed.add_field(
         name="⏰ Time", value=f"{event_start_time} to {event_end_time}", inline=False)
+
+    embed.timestamp = datetime.now()
+    timezone = find_timezone(embed.timestamp)
 
     view = CreateServerView(
         event_details=event_details,
         uiud=uiud,
         user_name=user_name,
-        gid=gid
+        gid=gid,
+        timezone=timezone
     )
     await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
     await view.future
@@ -301,31 +389,29 @@ async def delete_event(interaction: discord.Interaction, event_id: int):
     gid = interaction.guild_id
 
     async with bot.pool.acquire() as conn:
-        # Check if the event exists
+        # Check if event exists
         event = await conn.fetchrow("SELECT * FROM event WHERE eid = $1 AND uiud = $2", event_id, uiud)
 
         if event:
-            # Delete the event and associated entries
-            await conn.execute("DELETE FROM scheduled WHERE eid = $1", event_id)
-            await conn.execute("DELETE FROM event WHERE eid = $1", event_id)
-            server = interaction.guild
-            if server:
-                role_name = f"Event {event_id}"
-                role = discord.utils.get(server.roles, name=role_name)
-                if role:
-                    try:
-                        await role.delete(reason=f"Event {event_id} deleted")
-                    except discord.Forbidden:
-                        await interaction.followup.send("The bot does not have permissions to delete roles, and the notification role has not been deleted. Please contact your server admins for help.", ephemeral=True)
-                        return
-                    except discord.HTTPException as e:
-                        await interaction.followup.send(f"Failed to delete notification role: {e}, please notify your admins to delete this role.", ephemeral=True)
-                        return
 
-            await interaction.response.send_message(
-                f"{interaction.user.mention}, event '{event['meetingname']}' has been deleted.",
-                ephemeral=True
-            )
+            embed = discord.Embed(
+                title="Event Deletion Confirmation", color=discord.Color.red())
+            embed.add_field(name="Event ID", value=event_id)
+            embed.add_field(name="Event Name", value=event['meetingname'])
+            embed.set_footer(
+                text="Please confirm if you want to delete this event.")
+
+            view = DeleteView(interaction, event_id, event['meetingname'], bot)
+
+            await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+            await view.wait()
+            try:
+                await interaction.delete_original_response()
+            except discord.NotFound:
+                # Message might be already deleted, ignore this exception
+                pass
+            except Exception as e:
+                print(f"Error in deleting message after submit: {e}")
         else:
             await interaction.response.send_message(
                 f"{interaction.user.mention}, event '{event_id}' not found or you don't have permission to delete it.",
@@ -333,7 +419,45 @@ async def delete_event(interaction: discord.Interaction, event_id: int):
             )
 
 
-# list out all events (outputs only to original user)
+# List server events
+@bot.tree.command(name="list_server_events", description="This command lists all server events happening in the future.")
+async def list_server_events(interaction: discord.Interaction):
+    if interaction.guild_id is None:
+        await interaction.response.send_message("Server events can only be displayed while using this command in a server.", ephemeral=True)
+        return
+
+    async with bot.pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT eid, meetingname, location, timestart, timeend FROM event WHERE gid = $1",
+            interaction.guild_id
+        )
+
+    if not rows:
+        await interaction.response.send_message(f"No events available for {interaction.guild.name}.")
+        return
+
+    # Paginate rows into pages of events
+    events_per_page = 4
+    pages = [rows[i:i + events_per_page]
+             for i in range(0, len(rows), events_per_page)]
+
+    def create_embed(page_rows):
+        embed = discord.Embed(title=f"Events for {interaction.guild.name}")
+
+        embed.timestamp = datetime.now()
+        timezone = find_timezone(embed.timestamp)
+
+        for row in page_rows:
+            embed.add_field(name=f"{row['meetingname']} (ID: {row['eid']})",
+                            value=f"\n📍 Location: {row['location']} \n ⌚ Time: {convert_locale(row['timestart'], timezone)} to {convert_locale(row['timeend'], timezone)}.\n", inline=False)
+        return embed
+
+    view = PaginationView(pages, create_embed, interaction)
+    embed = create_embed(pages[0])
+    await interaction.response.send_message(embed=embed, view=view)
+
+
+# list out all events (outputs only to original user) -- TO-DO -> NEEDS TO BE FIXED
 @bot.tree.command(name="show_events", description="This lists all events you have created and/or signed up for.")
 async def show_events(interaction: discord.Interaction):
     uiud = str(interaction.user.id)
@@ -357,37 +481,20 @@ async def show_events(interaction: discord.Interaction):
 
         if rows:
             # Convert from UTC back to the user's time
-            response = "Here are your events:\n" + "\n".join(
-                f"{row['meetingname']} at {row['location']}, from {utc_to_local(row['timestart'])} to {utc_to_local(row['timeend'])}." for row in rows
-            )
+            response = "Here are your events:\n"
+            for row in rows:
+                row['timestart'], row['timeend'] = utc_to_local(
+                    row['timestart']), utc_to_local(row['timeend'])
+
+                response += f"{time_format_locale(row['timestart'])} to {time_format_locale(row['timeend'])}"
+
+            # response = "Here are your events:\n" + "\n".join(
+            #     f"{row['meetingname']} at {row['location']}, from {utc_to_local(row['timestart'])} to {utc_to_local(row['timeend'])}." for row in rows
+            # )
         else:
             response = "You have no events scheduled."
 
         await interaction.response.send_message(response, ephemeral=True)
-
-
-# shows all server events so a user can potentially sign up for it
-@bot.tree.command(name="list_server_events", description="This command lists all server events happening in the future.")
-async def list_server_events(interaction: discord.Interaction):
-    if interaction.guild_id is None:
-        await interaction.response.send_message("Server events can only be displayed while using this command in a server.", ephemeral=True)
-        return
-
-    async with bot.pool.acquire() as conn:
-        rows = await conn.fetch(
-            "SELECT eid, meetingname, location, timestart, timeend FROM event WHERE gid = $1",
-            interaction.guild_id
-        )
-
-    if rows:
-        response = f"Here are the events for {interaction.guild.name}:\n" + "\n".join(
-            f"Event {row['eid']}: {row['meetingname']} at {row['location']}, from {row['timestart']} to {row['timeend']}."
-            for row in rows
-        )
-    else:
-        response = f"No events available for {interaction.guild.name}."
-
-    await interaction.response.send_message(response)
 
 
 @bot.tree.command(name="get_notified")
