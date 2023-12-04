@@ -67,7 +67,7 @@ async def reminder():
                 if server:
                     role = discord.utils.get(server.roles, name=f"Event {event['eid']}")
                     if role:
-                        channel = guild.system_channel or next((x for x in guild.text_channels), None)  # this just picks either the system or first available text channel, so idk what yall want
+                        channel = server.system_channel or next((x for x in server.text_channels), None)  # this just picks either the system or first available text channel, so idk what yall want
                         if channel:
                             await channel.send(f"{role.mention} Your event '{event['meetingname']}' is starting soon!")
 
@@ -97,7 +97,7 @@ async def cleanup():
                 server = bot.get_guild(event['gid'])
                 if server:
                     role_name = f"Event {event['eid']}"
-                    role = discord.utils.get(guild.roles, name=role_name)
+                    role = discord.utils.get(server.roles, name=role_name)
                     if role:
                         try:
                             await role.delete(reason=f"Event {event['eid']} has ended.")
