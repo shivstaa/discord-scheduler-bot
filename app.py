@@ -140,6 +140,7 @@ async def create_private_event(
     except Exception as e:
         print(f"Error in deleting message after submit: {e}")
 
+
 class CreateServerView(discord.ui.View):
     def __init__(self, event_details, uiud, user_name, gid, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -170,6 +171,9 @@ class CreateServerView(discord.ui.View):
 
         # Database operations
         async with bot.pool.acquire() as conn:
+            user = await conn.fetchrow("SELECT * FROM \"user\" WHERE uiud = $1", self.uiud)
+            if user is None:
+                await conn.execute("INSERT INTO \"user\" (uiud, name) VALUES ($1, $2)", self.uiud, self.user_name)
             # Check for overlapping events
             overlap = await conn.fetchrow(
                 "SELECT * FROM event WHERE gid = $1 AND timestart < $3 AND timeend > $2",
@@ -191,6 +195,8 @@ class CreateServerView(discord.ui.View):
                 await conn.execute(
                     "INSERT INTO scheduled (uiud, eid, status, notification) VALUES ($1, $2, 'Yes', 0)",
                     self.uiud, eid)
+                role_name = f"Event {eid}"
+                await notification_role(interaction.guild, interaction.user.id, role_name)
                 await interaction.response.send_message(
                     f"{interaction.user.mention}, {event_name} at {event_location} has been scheduled for {self.event_details['event_start_date']} from {self.event_details['event_start_time']} to {self.event_details['event_end_time']}.",
                     ephemeral=True)
@@ -206,7 +212,6 @@ class CreateServerView(discord.ui.View):
     async def cancel_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_message("Operation canceled.", ephemeral=True)
         self.future.set_result(True)
-
 
 
 # create group event
@@ -265,7 +270,6 @@ async def create_group_event(
         print(f"Error in deleting message after submit: {e}")
 
 
-
 # delete event
 @bot.tree.command(name="delete_event")
 @app_commands.describe(
@@ -283,6 +287,19 @@ async def delete_event(interaction: discord.Interaction, event_id: int):
             # Delete the event and associated entries
             await conn.execute("DELETE FROM scheduled WHERE eid = $1", event_id)
             await conn.execute("DELETE FROM event WHERE eid = $1", event_id)
+            server = interaction.guild
+            if server:
+                role_name = f"Event {event_id}"
+                role = discord.utils.get(server.roles, name=role_name)
+                if role:
+                    try:
+                        await role.delete(reason=f"Event {event_id} deleted")
+                    except discord.Forbidden:
+                        await interaction.followup.send("The bot does not have permissions to delete roles, and the notification role has not been deleted. Please contact your server admins for help.", ephemeral=True)
+                        return
+                    except discord.HTTPException as e:
+                        await interaction.followup.send(f"Failed to delete notification role: {e}, please notify your admins to delete this role.", ephemeral=True)
+                        return
 
             await interaction.response.send_message(
                 f"{interaction.user.mention}, event '{event['meetingname']}' has been deleted.",
@@ -364,6 +381,9 @@ async def get_notified(interaction: discord.Interaction, event_number: int):
     gid = interaction.guild_id
 
     async with bot.pool.acquire() as conn:
+        user = await conn.fetchrow("SELECT * FROM \"user\" WHERE uiud = $1", uiud)
+        if user is None:
+            await conn.execute("INSERT INTO \"user\" (uiud, name) VALUES ($1, $2)", uiud, interaction.user.name)
         # Check if the event exists in the server
         event = await conn.fetchrow(
             "SELECT eid, meetingname FROM event WHERE eid = $1 AND gid = $2",
@@ -382,6 +402,8 @@ async def get_notified(interaction: discord.Interaction, event_number: int):
                     # right now im gonna do it so 'Yes' just means signed up and 0 means not notified, you would change to 1 once they have been, and then they wont get pinged again that way.
                     uiud, event['eid']
                 )
+                role_name = f"Event {event['eid']}"
+                await notification_role(interaction.guild, interaction.user.id, role_name)
                 await interaction.response.send_message(
                     f"You have been signed up for '{event['meetingname']}'.",
                     ephemeral=True
@@ -396,6 +418,88 @@ async def get_notified(interaction: discord.Interaction, event_number: int):
                 f"Event number {event_number} is either not in this server, or the event number is invalid",
                 ephemeral=True
             )
+
+
+@bot.tree.command(name="stop_notifications")
+@app_commands.describe(event_id="The event number you want to stop getting notifications for")
+async def stop_notifications(interaction: discord.Interaction, event_id: int):
+    uiud = str(interaction.user.id)
+    server = interaction.guild
+
+    async with bot.pool.acquire() as conn:
+        # Check if the user is signed up for event
+        signup = await conn.fetchrow(
+            "SELECT * FROM scheduled WHERE uiud = $1 AND eid = $2",
+            uiud, event_id
+        )
+
+        if signup:
+            # Remove the user from the scheduled table
+            await conn.execute(
+                "DELETE FROM scheduled WHERE uiud = $1 AND eid = $2",
+                uiud, event_id
+            )
+
+            # Attempt to remove the role from server user
+            if server:
+                role_name = f"Event {event_id}"
+                role = discord.utils.get(server.roles, name=role_name)
+                member = server.get_member(int(uiud))
+                if role and member:
+                    try:
+                        await member.remove_roles(role, reason=f"User opted out of event {event_id} notifications")
+                    except discord.Forbidden:
+                        await interaction.response.send_message(
+                            "The bot does not have permissions to delete roles, and the notification role has not been removed. Please contact your server admins for help.",
+                            ephemeral=True
+                        )
+                        return
+                    except discord.HTTPException as e:
+                        await interaction.response.send_message(
+                            f"Failed to delete notification role: {e}, please notify your admins to delete this role.",
+                            ephemeral=True
+                        )
+                        return
+            else:
+                await interaction.response.send_message("Please use delete event when removing personal events, as no role is created for personal event notifications.", ephemeral=True)
+                return
+
+            await interaction.response.send_message(
+                f"You will no longer receive notifications for event ID {event_id}.",
+                ephemeral=True
+            )
+        else:
+            await interaction.response.send_message(
+                f"You are not signed up for notifications for event ID {event_id}, or it does not exist for you.",
+                ephemeral=True
+            )
+
+
+async def notification_role(server, user_id, role_name):
+    if server:
+        existing_role = discord.utils.get(server.roles, name=role_name)
+        if not existing_role:
+            # Create the role
+            try:
+                new_role = await server.create_role(name=role_name, reason="New event role")
+            except discord.Forbidden:
+                print(
+                    "The bot does not have permissions to create roles. Please contact your server admins for help.")
+                return None
+        else:
+            new_role = existing_role
+
+        member = server.get_member(user_id)
+        if member:
+            try:
+                await member.add_roles(new_role, reason="Assigned for event signup")
+                return new_role
+            except discord.Forbidden:
+                print(
+                    "The bot does not have permissions to assign roles. Please contact your server admins for help.")
+        else:
+            print("Member not found in the server.")
+    return None
 
 
 @bot.tree.command(name="modify_event")
