@@ -98,48 +98,6 @@ class CreatePrivateView(discord.ui.View):
         self.future.set_result(True)
 
 
-# create private event
-@bot.tree.command(name="create_private_event")
-@app_commands.describe(
-    event_name="Event name",
-    event_location="Event Location",
-    event_start_date="Event Start Date (YYYY-MM-DD)",
-    event_end_date="Event End Date (YYYY-MM-DD)",
-    event_start_time="Event Start Time (HH:MM:SS)",
-    event_end_time="Event End Time (HH:MM:SS)"
-)
-async def create_private_event(
-    interaction: discord.Interaction,
-    event_name: str,
-    event_location: str,
-    event_start_date: str,
-    event_end_date: str,
-    event_start_time: str,
-    event_end_time: str
-):
-    event_details = {
-        'event_name': event_name,
-        'event_location': event_location,
-        'event_start_date': event_start_date,
-        'event_end_date': event_end_date,
-        'event_start_time': event_start_time,
-        'event_end_time': event_end_time
-    }
-    uiud = str(interaction.user.id)
-    user_name = interaction.user.name
-
-    view = CreatePrivateView(
-        event_details=event_details, uiud=uiud, user_name=user_name)
-    await interaction.response.send_message(f"Please confirm the event creation:\n Event: {event_name} \n Location: {event_location} \n Dates: {event_start_date} to {event_end_date} \n Time: {event_start_time} to {event_end_time}.", view=view, ephemeral=True)
-    await view.future
-    try:
-        await interaction.delete_original_response()
-    except discord.NotFound:
-        # Message might be already deleted, ignore this exception
-        pass
-    except Exception as e:
-        print(f"Error in deleting message after submit: {e}")
-
 class CreateServerView(discord.ui.View):
     def __init__(self, event_details, uiud, user_name, gid, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -208,6 +166,63 @@ class CreateServerView(discord.ui.View):
         self.future.set_result(True)
 
 
+# create private event
+@bot.tree.command(name="create_private_event")
+@app_commands.describe(
+    event_name="Event name",
+    event_location="Event Location",
+    event_start_date="Event Start Date (YYYY-MM-DD)",
+    event_end_date="Event End Date (YYYY-MM-DD)",
+    event_start_time="Event Start Time (HH:MM:SS)",
+    event_end_time="Event End Time (HH:MM:SS)"
+)
+async def create_private_event(
+    interaction: discord.Interaction,
+    event_name: str,
+    event_location: str,
+    event_start_date: str,
+    event_end_date: str,
+    event_start_time: str,
+    event_end_time: str
+):
+    event_details = {
+        'event_name': event_name,
+        'event_location': event_location,
+        'event_start_date': event_start_date,
+        'event_end_date': event_end_date,
+        'event_start_time': event_start_time,
+        'event_end_time': event_end_time
+    }
+    uiud = str(interaction.user.id)
+    user_name = interaction.user.name
+
+    embed = discord.Embed(
+        title="Event Confirmation",
+        description="Please confirm the event creation:",
+        color=discord.Color.blue()
+    )
+
+    embed.add_field(name="📧 Event", value=event_name, inline=False)
+    embed.add_field(name="📍 Location", value=event_location, inline=False)
+    embed.add_field(
+        name="📅 Dates", value=f"{event_start_date} to {event_end_date}", inline=False)
+    embed.add_field(
+        name="⏰ Time", value=f"{event_start_time} to {event_end_time}", inline=False)
+
+    # Sending the embed
+    view = CreatePrivateView(
+        event_details=event_details, uiud=uiud, user_name=user_name)
+    await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+
+    await view.future
+    try:
+        await interaction.delete_original_response()
+    except discord.NotFound:
+        # Message might be already deleted, ignore this exception
+        pass
+    except Exception as e:
+        print(f"Error in deleting message after submit: {e}")
+
 
 # create group event
 @bot.tree.command(name="create_group_event")
@@ -244,6 +259,18 @@ async def create_group_event(
         'event_start_time': event_start_time,
         'event_end_time': event_end_time
     }
+    embed = discord.Embed(
+        title="Event Confirmation",
+        description="Please confirm the event creation:",
+        color=discord.Color.blue()
+    )
+
+    embed.add_field(name="📧 Event", value=event_name, inline=False)
+    embed.add_field(name="📍 Location", value=event_location, inline=False)
+    embed.add_field(
+        name="📅 Dates", value=f"{event_start_date} to {event_end_date}", inline=False)
+    embed.add_field(
+        name="⏰ Time", value=f"{event_start_time} to {event_end_time}", inline=False)
 
     view = CreateServerView(
         event_details=event_details,
@@ -251,10 +278,7 @@ async def create_group_event(
         user_name=user_name,
         gid=gid
     )
-    await interaction.response.send_message(
-        f"Please confirm the server event creation:\n Event: {event_name} \n Location: {event_location} \n Dates: {event_start_date} to {event_end_date} \n Time: {event_start_time} to {event_end_time}.",
-        view=view, ephemeral=True
-    )
+    await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
     await view.future
     try:
         await interaction.delete_original_response()
@@ -263,7 +287,6 @@ async def create_group_event(
         pass
     except Exception as e:
         print(f"Error in deleting message after submit: {e}")
-
 
 
 # delete event
