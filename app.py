@@ -296,7 +296,7 @@ async def delete_event(interaction: discord.Interaction, event_id: int):
 
 
 # list out all events (outputs only to original user)
-@bot.tree.command(name="show_events")
+@bot.tree.command(name="show_events", description="This lists all events you have created and/or signed up for.")
 async def show_events(interaction: discord.Interaction):
     uiud = str(interaction.user.id)
     gid = interaction.guild_id
@@ -329,8 +329,8 @@ async def show_events(interaction: discord.Interaction):
 
 
 # shows all server events so a user can potentially sign up for it
-@bot.tree.command(name="show_server_events")
-async def show_server_events(interaction: discord.Interaction):
+@bot.tree.command(name="list_server_events", description="This command lists all server events happening in the future.")
+async def list_server_events(interaction: discord.Interaction):
     if interaction.guild_id is None:
         await interaction.response.send_message("Server events can only be displayed while using this command in a server.", ephemeral=True)
         return
