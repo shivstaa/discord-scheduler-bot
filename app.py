@@ -31,10 +31,83 @@ async def on_ready():
             password=os.getenv("PASSWORD")
         )
         synced = await bot.tree.sync()
+        reminder.start()
+        cleanup.start()
         print(f"Synced {len(synced)} command(s)")
 
     except Exception as e:
         print("Error ", e)
+
+
+
+@tasks.loop(minutes=1)
+async def reminder():
+    current_time = datetime.utcnow() 
+
+    async with bot.pool.acquire() as conn:
+        events = await conn.fetch(
+            """
+            SELECT s.uiud, s.eid, e.meetingname, e.timestart, e.timeend, e.gid, s.notification
+            FROM scheduled s
+            INNER JOIN event e ON s.eid = e.eid
+            WHERE e.timestart <= $1
+            AND s.notification = 0
+            """,
+            current_time
+        )
+
+        for event in events:
+            if not event['gid']:
+                user = await bot.fetch_user(event['uiud'])
+                if user:
+                    await user.send(f"'{event['meetingname']}' is starting soon!")
+            
+            else:
+                server = bot.get_guild(event['gid'])
+                if server:
+                    role = discord.utils.get(server.roles, name=f"Event {event['eid']}")
+                    if role:
+                        channel = guild.system_channel or next((x for x in guild.text_channels), None)  # this just picks either the system or first available text channel, so idk what yall want
+                        if channel:
+                            await channel.send(f"{role.mention} Your event '{event['meetingname']}' is starting soon!")
+
+            await conn.execute(
+                "UPDATE scheduled SET notification = 1 WHERE uiud = $1 AND eid = $2",
+                event['uiud'], event['eid']
+            )
+
+
+
+@tasks.loop(minutes=1)
+async def cleanup():
+    current_time = datetime.utcnow() 
+
+    async with bot.pool.acquire() as conn:
+        ended = await conn.fetch(
+            """
+            SELECT eid, meetingname, gid
+            FROM event
+            WHERE timeend <= $1
+            """,
+            current_time
+        )
+
+        for event in ended:
+            if event['gid']:
+                server = bot.get_guild(event['gid'])
+                if server:
+                    role_name = f"Event {event['eid']}"
+                    role = discord.utils.get(guild.roles, name=role_name)
+                    if role:
+                        try:
+                            await role.delete(reason=f"Event {event['eid']} has ended.")
+                        except discord.Forbidden:
+                            print(f"The bot doesn't have permission to delete roles in this server, please contact your server admins!")
+                        except discord.HTTPException as e:
+                            print(f"Failed to delete role for event {event['eid']}: {e}")
+
+            await conn.execute("DELETE FROM scheduled WHERE eid = $1", event['eid'])
+            await conn.execute("DELETE FROM event WHERE eid = $1", event['eid'])
 
 
 class CreatePrivateView(discord.ui.View):
