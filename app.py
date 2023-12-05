@@ -15,7 +15,7 @@ import pytz
 
 load_dotenv()
 intents = discord.Intents.all()
-
+reminder_status = asyncio.Event()
 # intents.message_content = True
 bot = commands.Bot(command_prefix='!', intents=intents)
 
@@ -32,10 +32,95 @@ async def on_ready():
             password=os.getenv("PASSWORD")
         )
         synced = await bot.tree.sync()
+        reminder.start()
+        cleanup.start()
         print(f"Synced {len(synced)} command(s)")
 
     except Exception as e:
         print("Error ", e)
+
+
+@tasks.loop(minutes=1)
+async def reminder():
+    await bot.wait_until_ready()
+    current_time = datetime.utcnow()
+
+    async with bot.pool.acquire() as conn:
+        events = await conn.fetch(
+            """
+            SELECT s.uiud, s.eid, e.meetingname, e.timestart, e.timeend, e.gid, s.notification
+            FROM scheduled s
+            INNER JOIN event e ON s.eid = e.eid
+            WHERE e.timestart <= $1
+            AND s.notification = 0
+            """,
+            current_time
+        )
+
+        for event in events:
+            if not event['gid']:
+                user = await bot.fetch_user(event['uiud'])
+                if user:
+                    await user.send(f"'{event['meetingname']}' is starting soon!")
+
+            else:
+                server = bot.get_guild(event['gid'])
+                if server:
+                    role = discord.utils.get(
+                        server.roles, name=f"Event {event['eid']}")
+                    if role:
+                        # this just picks either the system or first available text channel, so idk what yall want
+                        channel = server.system_channel or next(
+                            (x for x in server.text_channels), None)
+                        if channel:
+                            await channel.send(f"{role.mention} Your event '{event['meetingname']}' is starting soon!")
+                    else:
+                        channel = server.system_channel or next(
+                            (x for x in server.text_channels), None)
+                        if channel:
+                            await channel.send(f"Your event '{event['meetingname']}' is starting soon!")
+
+            await conn.execute(
+                "UPDATE scheduled SET notification = 1 WHERE uiud = $1 AND eid = $2",
+                event['uiud'], event['eid']
+            )
+    reminder_status.set()
+
+
+@tasks.loop(minutes=1)
+async def cleanup():
+    await reminder_status.wait()
+    current_time = datetime.utcnow()
+
+    async with bot.pool.acquire() as conn:
+        ended = await conn.fetch(
+            """
+            SELECT eid, meetingname, gid
+            FROM event
+            WHERE timeend <= $1
+            """,
+            current_time
+        )
+
+        for event in ended:
+            if event['gid']:
+                server = bot.get_guild(event['gid'])
+                if server:
+                    role_name = f"Event {event['eid']}"
+                    role = discord.utils.get(server.roles, name=role_name)
+                    if role:
+                        try:
+                            await role.delete(reason=f"Event {event['eid']} has ended.")
+                        except discord.Forbidden:
+                            print(
+                                f"The bot doesn't have permission to delete roles in this server, please contact your server admins!")
+                        except discord.HTTPException as e:
+                            print(
+                                f"Failed to delete role for event {event['eid']}: {e}")
+
+            await conn.execute("DELETE FROM scheduled WHERE eid = $1", event['eid'])
+            await conn.execute("DELETE FROM event WHERE eid = $1", event['eid'])
+    reminder_status.clear()
 
 
 class CreatePrivateView(discord.ui.View):
@@ -144,17 +229,6 @@ class CreateServerView(discord.ui.View):
 
         # Database operations
         async with bot.pool.acquire() as conn:
-            # Check for overlapping events
-            overlap = await conn.fetchrow(
-                "SELECT * FROM event WHERE gid = $1 AND timestart < $3 AND timeend > $2",
-                self.gid, event_start, event_end)
-
-            if overlap:
-                await interaction.response.send_message(
-                    f"{interaction.user.mention}, there is an overlapping event.",
-                    ephemeral=True)
-                self.future.set_result(True)
-                return
 
             # Insert new event
             eid = await conn.fetchval(
@@ -165,6 +239,8 @@ class CreateServerView(discord.ui.View):
                 await conn.execute(
                     "INSERT INTO scheduled (uiud, eid, status, notification) VALUES ($1, $2, 'Yes', 0)",
                     self.uiud, eid)
+                role_name = f"Event {eid}"
+                await notification_role(interaction.guild, interaction.user.id, role_name)
                 await interaction.response.send_message(
                     f"{interaction.user.mention}, {event_name} at {event_location} has been scheduled for {date_format(self.event_details['event_start_date'])} to {date_format(self.event_details['event_end_date'])} from {convert_locale(local_to_utc(self.event_details['event_start_time']), self.timezone)} to {convert_locale(local_to_utc(self.event_details['event_end_time']), self.timezone)}.", ephemeral=True)
 
@@ -758,13 +834,21 @@ async def notification_role(server, user_id, role_name):
         if not existing_role:
             # Create the role
             try:
-                new_role = await server.create_role(name=role_name, reason="New event role")
+                new_role = await server.create_role(name=role_name, mentionable=True, reason="New event role")
+
             except discord.Forbidden:
                 print(
                     "The bot does not have permissions to create roles. Please contact your server admins for help.")
                 return None
         else:
             new_role = existing_role
+            if not new_role.mentionable:
+                try:
+                    await new_role.edit(mentionable=True)
+                except discord.Forbidden:
+                    print(
+                        "The bot does not have permissions to edit roles. Please contact your server admins for help.")
+                    return None
 
         member = server.get_member(user_id)
         if member:
@@ -850,33 +934,4 @@ async def modify_event(interaction: discord.Interaction,
             await interaction.response.send_message("No changes specified for the event.", ephemeral=True)
 
 
-async def send_event_notifications():
-    await bot.wait_until_ready()  # Wait until the bot is fully connected
-
-    while not bot.is_closed():
-        # Your database query to get events that need notifications
-        async with bot.pool.acquire() as conn:
-            current_time = datetime.utcnow()
-            upcoming_events = await conn.fetch(
-                """
-                SELECT e.eid, e.meetingname, e.timestart, s.uiud
-                FROM event e
-                INNER JOIN scheduled s ON e.eid = s.eid
-                WHERE e.timestart > $1 AND e.timestart < $2 AND s.notification = 0
-                """,
-                current_time, current_time + timedelta(minutes=13)
-            )
-
-            for event in upcoming_events:
-                user = await bot.fetch_user(int(event['uiud']))
-                if user:
-                    await user.send(f"Reminder: Your event '{event['meetingname']}' is starting soon!")
-
-                    # Update notification status to avoid sending multiple notifications
-                    await conn.execute("UPDATE scheduled SET notification = 1 WHERE eid = $1 AND uiud = $2", event['eid'], event['uiud'])
-
-        await asyncio.sleep(60)  # Check every minute, adjust as needed
-
-
-# Start the background task
 bot.run(os.getenv("DISCORD_TOKEN"))
