@@ -50,8 +50,8 @@ class CreatePrivateView(discord.ui.View):
     async def submit_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         event_name = self.event_details['event_name']
         event_location = self.event_details['event_location']
-        event_start = f"{self.event_details['event_start_date']} {self.event_details['event_start_time']}"
-        event_end = f"{self.event_details['event_end_date']} {self.event_details['event_end_time']}"
+        event_start = f"{self.event_details['event_start_date']} {local_to_utc(self.event_details['event_start_time'])}"
+        event_end = f"{self.event_details['event_end_date']} {local_to_utc(self.event_details['event_end_time'])}"
 
         try:
             event_start = datetime.strptime(event_start, "%Y-%m-%d %H:%M:%S")
@@ -78,7 +78,7 @@ class CreatePrivateView(discord.ui.View):
                 role_name = f"Event {eid}"
                 await notification_role(interaction.guild, interaction.user.id, role_name)
                 await interaction.response.send_message(
-                    f"{interaction.user.mention}, {event_name} at {event_location} has been scheduled for {date_format(self.event_details['event_start_date'])} to {date_format(self.event_details['event_end_date'])} from {convert_locale(self.event_details['event_start_time'], self.timezone)} to {convert_locale(self.event_details['event_end_time'], self.timezone)}.", ephemeral=True)
+                    f"{interaction.user.mention}, {event_name} at {event_location} has been scheduled for {date_format(self.event_details['event_start_date'])} to {date_format(self.event_details['event_end_date'])} from {convert_locale(local_to_utc(self.event_details['event_start_time']), self.timezone)} to {convert_locale(local_to_utc(self.event_details['event_end_time']), self.timezone)}.", ephemeral=True)
 
             else:
                 await interaction.response.send_message(
@@ -108,8 +108,8 @@ class CreateServerView(discord.ui.View):
         # Extract event details
         event_name = self.event_details['event_name']
         event_location = self.event_details['event_location']
-        event_start = f"{self.event_details['event_start_date']} {self.event_details['event_start_time']}"
-        event_end = f"{self.event_details['event_end_date']} {self.event_details['event_end_time']}"
+        event_start = f"{self.event_details['event_start_date']} {local_to_utc(self.event_details['event_start_time'])}"
+        event_end = f"{self.event_details['event_end_date']} {local_to_utc(self.event_details['event_end_time'])}"
 
         # Parse date and time
         try:
@@ -146,7 +146,7 @@ class CreateServerView(discord.ui.View):
                     "INSERT INTO scheduled (uiud, eid, status, notification) VALUES ($1, $2, 'Yes', 0)",
                     self.uiud, eid)
                 await interaction.response.send_message(
-                    f"{interaction.user.mention}, {event_name} at {event_location} has been scheduled for {date_format(self.event_details['event_start_date'])} to {date_format(self.event_details['event_end_date'])} from {convert_locale(self.event_details['event_start_time'], self.timezone)} to {convert_locale(self.event_details['event_end_time'], self.timezone)}.", ephemeral=True)
+                    f"{interaction.user.mention}, {event_name} at {event_location} has been scheduled for {date_format(self.event_details['event_start_date'])} to {date_format(self.event_details['event_end_date'])} from {convert_locale(local_to_utc(self.event_details['event_start_time']), self.timezone)} to {convert_locale(local_to_utc(self.event_details['event_end_time']), self.timezone)}.", ephemeral=True)
 
             else:
                 await interaction.response.send_message(

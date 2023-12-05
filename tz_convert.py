@@ -86,7 +86,7 @@ def convert_locale(time, timezone_str):
     time_obj = time_obj.replace(tzinfo=pytz.utc).astimezone(timezone)
 
     period = "AM" if time_obj.hour < 12 else "PM"
-    hrs = time_obj.hour % 12 if time_obj.hour != 0 else 12
+    hrs = time_obj.hour % 12 if time_obj.hour %12 != 0 else 12
     get_tz = time_obj.strftime('%Z')
 
     return f"{hrs:01d}:{time_obj.minute:02d} {period} {get_tz}" if hrs > 10 else f"{hrs:02d}:{time_obj.minute:02d} {period} {get_tz}"
