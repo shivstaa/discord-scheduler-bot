@@ -485,8 +485,18 @@ async def list_server_events(interaction: discord.Interaction):
         timezone = find_timezone(embed.timestamp)
 
         for row in page_rows:
+            start_time_info = row['timestart'].strftime(
+                '%Y-%m-%d %H:%M:%S'
+            )
+            end_time_info = row['timeend'].strftime(
+                '%Y-%m-%d %H:%M:%S'
+            )
+            start_date, start_time = start_time_info.split(' ')
+            end_date, end_time = end_time_info.split(' ')
+            start_date, end_date = date_format(
+                start_date), date_format(end_date)
             embed.add_field(name=f"{row['meetingname']} (ID: {row['eid']})",
-                            value=f"\n📍 Location: {row['location']} \n ⌚ Time: {convert_locale(row['timestart'], timezone)} to {convert_locale(row['timeend'], timezone)}.\n", inline=False)
+                            value=f"\n📍 Location: {row['location']} \n 📅 Date: {start_date} to {end_date} \n⌚ Time: {convert_locale(start_time, timezone)} to {convert_locale(end_time, timezone)}.\n", inline=False)
         return embed
 
     view = PaginationView(pages, create_embed, interaction)
