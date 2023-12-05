@@ -17,6 +17,19 @@ def local_to_utc(user_time):
     return utc_time.strftime('%H:%M:%S')
 
 
+def local_to_utc_date(local_datetime_str):
+    # Assuming local_datetime_str is in the format "%Y-%m-%d %H:%M:%S"
+    local_datetime = datetime.strptime(local_datetime_str, '%Y-%m-%d %H:%M:%S')
+
+    # Get local time zone
+    local_tz = tzlocal.get_localzone()
+    local_datetime = local_datetime.replace(tzinfo=local_tz)
+
+    # Convert to UTC
+    utc_datetime = local_datetime.astimezone(timezone.utc)
+    return utc_datetime
+
+
 def utc_to_local(utc_time):
     if not isinstance(utc_time, datetime):
         # parse it into a datetime object
@@ -86,7 +99,7 @@ def convert_locale(time, timezone_str):
     time_obj = time_obj.replace(tzinfo=pytz.utc).astimezone(timezone)
 
     period = "AM" if time_obj.hour < 12 else "PM"
-    hrs = time_obj.hour % 12 if time_obj.hour %12 != 0 else 12
+    hrs = time_obj.hour % 12 if time_obj.hour % 12 != 0 else 12
     get_tz = time_obj.strftime('%Z')
 
     return f"{hrs:01d}:{time_obj.minute:02d} {period} {get_tz}" if hrs > 10 else f"{hrs:02d}:{time_obj.minute:02d} {period} {get_tz}"
@@ -104,3 +117,10 @@ def date_format(date):
             "Input must be a string in 'YYYY-MM-DD' format or a datetime object")
 
     return date.strftime('%m-%d-%Y')
+
+
+def validate_time_input(start, end):
+
+    current_utc = datetime.now(timezone.utc)
+
+    return start < end and start > current_utc

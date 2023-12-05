@@ -8,7 +8,7 @@ from discord.ui import Modal, Button, View, TextInput
 from discord import ButtonStyle
 from typing import Optional
 import os
-from tz_convert import local_to_utc, utc_to_local, time_format_locale, date_format, find_timezone, convert_locale
+from tz_convert import local_to_utc, utc_to_local, time_format_locale, date_format, find_timezone, convert_locale, local_to_utc_date, validate_time_input
 import timedelta
 from dotenv import load_dotenv
 import pytz
@@ -55,11 +55,21 @@ class CreatePrivateView(discord.ui.View):
         event_end = f"{self.event_details['event_end_date']} {local_to_utc(self.event_details['event_end_time'])}"
 
         try:
-            event_start = datetime.strptime(event_start, "%Y-%m-%d %H:%M:%S")
-            event_end = datetime.strptime(event_end, "%Y-%m-%d %H:%M:%S")
+            event_start = datetime.strptime(
+                event_start, "%Y-%m-%d %H:%M:%S").strftime("%Y-%m-%d %H:%M:%S")
+            event_end = datetime.strptime(
+                event_end, "%Y-%m-%d %H:%M:%S").strftime("%Y-%m-%d %H:%M:%S")
+
+            event_start_utc = local_to_utc_date(event_start)
+            event_end_utc = local_to_utc_date(event_end)
+
+            if not validate_time_input(event_start_utc, event_end_utc):
+                raise ValueError(
+                    "Event start time is either past or after event end time")
+
         except ValueError:
             await interaction.response.send_message(
-                "Invalid timestamps, please make sure your timestamps follow the format (YYYY-MM-DD) for date and (HH:MM:SS) for time.", ephemeral=True)
+                "Invalid timestamps, please make sure your timestamps follow the format (YYYY-MM-DD) for date and (HH:MM:SS) for time.\n Alternatively, Event start time could be either in the past or after the event end time", ephemeral=True)
             self.future.set_result(True)
             return
 
@@ -114,12 +124,21 @@ class CreateServerView(discord.ui.View):
 
         # Parse date and time
         try:
-            event_start = datetime.strptime(event_start, "%Y-%m-%d %H:%M:%S")
-            event_end = datetime.strptime(event_end, "%Y-%m-%d %H:%M:%S")
+            event_start = datetime.strptime(
+                event_start, "%Y-%m-%d %H:%M:%S").strftime("%Y-%m-%d %H:%M:%S")
+            event_end = datetime.strptime(
+                event_end, "%Y-%m-%d %H:%M:%S").strftime("%Y-%m-%d %H:%M:%S")
+
+            event_start_utc = local_to_utc_date(event_start)
+            event_end_utc = local_to_utc_date(event_end)
+
+            if not validate_time_input(event_start_utc, event_end_utc):
+                raise ValueError(
+                    "Event start time is either past or after event end time")
+
         except ValueError:
             await interaction.response.send_message(
-                "Invalid timestamps, please make sure your timestamps follow the format (YYYY-MM-DD) for date and (HH:MM:SS) for time.",
-                ephemeral=True)
+                "Invalid timestamps, please make sure your timestamps follow the format (YYYY-MM-DD) for date and (HH:MM:SS) for time.\n Alternatively, Event start time could be either in the past or after the event end time", ephemeral=True)
             self.future.set_result(True)
             return
 
