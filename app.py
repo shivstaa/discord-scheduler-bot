@@ -10,7 +10,6 @@ from typing import Optional
 import os
 from tz_convert import local_to_utc, utc_to_local, time_format_locale, date_format, find_timezone, convert_locale
 import timedelta
-from tz_convert import local_to_utc, utc_to_local
 from dotenv import load_dotenv
 import pytz
 
@@ -29,7 +28,7 @@ async def on_ready():
         bot.pool = await asyncpg.create_pool(
             host=os.getenv("HOST"),
             database=os.getenv("DATABASE"),
-            user=os.getenv("USERNAME"),
+            user=os.getenv("USER_NAME"),
             password=os.getenv("PASSWORD")
         )
         synced = await bot.tree.sync()
@@ -287,6 +286,78 @@ class NotificationView(discord.ui.View):
         self.future.set_result(True)
 
 
+class RemoveNotificationView(discord.ui.View):
+    def __init__(self, event_id, uiud, interaction):
+        super().__init__(timeout=180)
+        self.event_id = event_id
+        self.uiud = uiud
+        self.interaction = interaction
+        self.future = asyncio.Future()
+
+    @discord.ui.button(label="Remove Notification", style=discord.ButtonStyle.red)
+    async def remove_button(self,  interaction: discord.Interaction, button: discord.ui.Button):
+        # Logic to remove the notification
+        async with bot.pool.acquire() as conn:
+            # Check if the user is signed up for the event
+            signup = await conn.fetchrow(
+                "SELECT * FROM scheduled WHERE uiud = $1 AND eid = $2",
+                self.uiud, self.event_id
+            )
+            print(f"Query result: {signup}")
+            if signup:
+                # Remove the user from the scheduled table
+                await conn.execute(
+                    "DELETE FROM scheduled WHERE uiud = $1 AND eid = $2",
+                    self.uiud, self.event_id
+                )
+
+                # Attempt to remove the role from server user
+                server = self.interaction.guild
+                if server:
+                    role_name = f"Event {self.event_id}"
+                    role = discord.utils.get(server.roles, name=role_name)
+                    member = server.get_member(int(self.uiud))
+                    if role and member:
+                        try:
+                            await member.remove_roles(role, reason=f"User opted out of event {self.event_id} notifications")
+                        except discord.Forbidden:
+                            await interaction.response.send_message(
+                                "The bot does not have permissions to delete roles, and the notification role has not been removed. Please contact your server admins for help.",
+                                ephemeral=True
+                            )
+                            self.future.set_result(True)
+                            return
+                        except discord.HTTPException as e:
+                            await interaction.response.send_message(
+                                f"Failed to delete notification role: {e}, please notify your admins to delete this role.",
+                                ephemeral=True
+                            )
+                            self.future.set_result(True)
+                            return
+
+                await interaction.response.send_message(
+                    f"You will no longer receive notifications for event ID {self.event_id}.",
+                    ephemeral=True
+                )
+                self.future.set_result(True)
+
+            else:
+                await interaction.response.send_message(
+                    f"You are not signed up for notifications for event ID {self.event_id}, or it does not exist.",
+                    ephemeral=True
+                )
+                self.future.set_result(True)
+
+            self.stop()
+
+    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.grey)
+    async def cancel_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        # Handle the cancellation of the command
+        await interaction.response.send_message("Notification removal canceled.", ephemeral=True)
+        self.future.set_result(True)
+        self.stop()
+
+
 # create private event
 @bot.tree.command(name="create_private_event")
 @app_commands.describe(
@@ -495,6 +566,7 @@ async def list_server_events(interaction: discord.Interaction):
             )
             start_date, start_time = start_time_info.split(' ')
             end_date, end_time = end_time_info.split(' ')
+
             start_date, end_date = date_format(
                 start_date), date_format(end_date)
             embed.add_field(name=f"{row['meetingname']} (ID: {row['eid']})",
@@ -635,57 +707,30 @@ async def get_notified(interaction: discord.Interaction, event_number: int):
 
 @bot.tree.command(name="remove_notification")
 @app_commands.describe(event_id="The event number you want to stop getting notifications for")
-async def stop_notifications(interaction: discord.Interaction, event_id: int):
+# Removes notification based on event id
+async def remove_notification(interaction: discord.Interaction, event_id: int):
     uiud = str(interaction.user.id)
-    server = interaction.guild
 
-    async with bot.pool.acquire() as conn:
-        # Check if the user is signed up for event
-        signup = await conn.fetchrow(
-            "SELECT * FROM scheduled WHERE uiud = $1 AND eid = $2",
-            uiud, event_id
-        )
+    # Create an embed for the confirmation message
+    embed = discord.Embed(
+        title="Remove Notification",
+        description=f"Do you want to remove the notification for event ID {event_id}?",
+        color=discord.Color.dark_red()
+    )
 
-        if signup:
-            # Remove the user from the scheduled table
-            await conn.execute(
-                "DELETE FROM scheduled WHERE uiud = $1 AND eid = $2",
-                uiud, event_id
-            )
+    view = RemoveNotificationView(event_id, uiud, interaction)
 
-            # Attempt to remove the role from server user
-            if server:
-                role_name = f"Event {event_id}"
-                role = discord.utils.get(server.roles, name=role_name)
-                member = server.get_member(int(uiud))
-                if role and member:
-                    try:
-                        await member.remove_roles(role, reason=f"User opted out of event {event_id} notifications")
-                    except discord.Forbidden:
-                        await interaction.response.send_message(
-                            "The bot does not have permissions to delete roles, and the notification role has not been removed. Please contact your server admins for help.",
-                            ephemeral=True
-                        )
-                        return
-                    except discord.HTTPException as e:
-                        await interaction.response.send_message(
-                            f"Failed to delete notification role: {e}, please notify your admins to delete this role.",
-                            ephemeral=True
-                        )
-                        return
-            else:
-                await interaction.response.send_message("Please use delete event when removing personal events, as no role is created for personal event notifications.", ephemeral=True)
-                return
+    await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
-            await interaction.response.send_message(
-                f"You will no longer receive notifications for event ID {event_id}.",
-                ephemeral=True
-            )
-        else:
-            await interaction.response.send_message(
-                f"You are not signed up for notifications for event ID {event_id}, or it does not exist for you.",
-                ephemeral=True
-            )
+    await view.wait()
+    await view.future
+    try:
+        await interaction.delete_original_response()
+    except discord.NotFound:
+        # Message might be already deleted, ignore this exception
+        pass
+    except Exception as e:
+        print(f"Error in deleting message after submit: {e}")
 
 
 async def notification_role(server, user_id, role_name):
@@ -813,7 +858,6 @@ async def send_event_notifications():
 
         await asyncio.sleep(60)  # Check every minute, adjust as needed
 
+
 # Start the background task
-
-
 bot.run(os.getenv("DISCORD_TOKEN"))
