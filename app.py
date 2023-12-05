@@ -509,6 +509,7 @@ async def show_events(interaction: discord.Interaction):
                 SELECT e.eid, e.meetingname, e.location, e.timestart, e.timeend 
                 FROM event e
                 INNER JOIN scheduled s ON e.eid = s.eid
+                WHERE e.gid = $1 AND s.uiud = $2
                 """, gid, uiud
             )
         else:
@@ -520,14 +521,21 @@ async def show_events(interaction: discord.Interaction):
             # Convert from UTC back to the user's time
             response = "Here are your events:\n"
             for row in rows:
-                row['timestart'], row['timeend'] = utc_to_local(
-                    row['timestart']), utc_to_local(row['timeend'])
+                start_time_info = row['timestart'].strftime(
+                    '%Y-%m-%d %H:%M:%S'
+                )
+                end_time_info = row['timeend'].strftime(
+                    '%Y-%m-%d %H:%M:%S'
+                )
+                start_date, start_time = start_time_info.split(' ')
+                end_date, end_time = end_time_info.split(' ')
 
-                response += f"{time_format_locale(row['timestart'])} to {time_format_locale(row['timeend'])}"
+                start_time, end_time = utc_to_local(
+                    start_time), utc_to_local(end_time)
+                start_date, end_date = date_format(
+                    start_date), date_format(end_date)
 
-            # response = "Here are your events:\n" + "\n".join(
-            #     f"{row['meetingname']} at {row['location']}, from {utc_to_local(row['timestart'])} to {utc_to_local(row['timeend'])}." for row in rows
-            # )
+                response += f"{row['meetingname']} (ID: {row['eid']}) at {row['location']}, {start_date} to {end_date} from {start_time} to {end_time}\n"
         else:
             response = "You have no events scheduled."
 
