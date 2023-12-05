@@ -504,9 +504,11 @@ async def list_server_events(interaction: discord.Interaction):
     await interaction.response.send_message(embed=embed, view=view)
 
 
-# list out all events (outputs only to original user) -- TO-DO -> NEEDS TO BE FIXED
+# list out all events (private, public)
 @bot.tree.command(name="show_events", description="This lists all events you have created and/or signed up for.")
 async def show_events(interaction: discord.Interaction):
+    await interaction.response.defer(ephemeral=True)
+
     uiud = str(interaction.user.id)
     gid = interaction.guild_id
     async with bot.pool.acquire() as conn:
@@ -525,31 +527,44 @@ async def show_events(interaction: discord.Interaction):
         else:
             server = []
 
-        rows = personal + server
+    rows = personal + server
 
-        if rows:
-            # Convert from UTC back to the user's time
-            response = "Here are your events:\n"
-            for row in rows:
-                start_time_info = row['timestart'].strftime(
-                    '%Y-%m-%d %H:%M:%S'
-                )
-                end_time_info = row['timeend'].strftime(
-                    '%Y-%m-%d %H:%M:%S'
-                )
-                start_date, start_time = start_time_info.split(' ')
-                end_date, end_time = end_time_info.split(' ')
+    if not rows:
+        await interaction.followup.send("You have no events scheduled.", ephemeral=True)
+        return
 
-                start_time, end_time = utc_to_local(
-                    start_time), utc_to_local(end_time)
-                start_date, end_date = date_format(
-                    start_date), date_format(end_date)
+    events_per_page = 4
+    pages = [rows[i:i + events_per_page]
+             for i in range(0, len(rows), events_per_page)]
 
-                response += f"{row['meetingname']} (ID: {row['eid']}) at {row['location']}, {start_date} to {end_date} from {start_time} to {end_time}\n"
-        else:
-            response = "You have no events scheduled."
+    def create_embed(page_rows):
+        embed = discord.Embed(title="Your Events")
+        embed.timestamp = datetime.now()
+        timezone = find_timezone(embed.timestamp)
 
-        await interaction.response.send_message(response, ephemeral=True)
+        for row in page_rows:
+            start_time_info = row['timestart'].strftime('%Y-%m-%d %H:%M:%S')
+            end_time_info = row['timeend'].strftime('%Y-%m-%d %H:%M:%S')
+            start_date, start_time = start_time_info.split(' ')
+            end_date, end_time = end_time_info.split(' ')
+
+            start_time, end_time = convert_locale(
+                start_time, timezone), convert_locale(end_time, timezone)
+            start_date, end_date = date_format(
+                start_date), date_format(end_date)
+
+            embed.add_field(
+                name=f"{row['meetingname']} (ID: {row['eid']})",
+                value=f"📍 Location: {row['location']}\n 📅 Date: {start_date} to {end_date}\n ⏲ Time: {start_time} to {end_time}",
+                inline=False
+            )
+
+        return embed
+
+    # Initialize and send the first page
+    view = PaginationView(pages, create_embed, interaction)
+    embed = create_embed(pages[0])
+    await interaction.followup.send(embed=embed, view=view, ephemeral=True)
 
 
 @bot.tree.command(name="get_notified")
@@ -602,58 +617,8 @@ async def get_notified(interaction: discord.Interaction, event_number: int):
                 ephemeral=True
             )
 
-# @bot.tree.command(name="get_notified")
-# @app_commands.describe(event_number="The event number you want to get notified for")
-# async def get_notified(interaction: discord.Interaction, event_number: int):
-#     # Ensure this is used within a server
-#     if interaction.guild_id is None:
-#         await interaction.response.send_message("This command can only be used in a server.", ephemeral=True)
-#         return
 
-#     uiud = str(interaction.user.id)
-#     gid = interaction.guild_id
-
-#     async with bot.pool.acquire() as conn:
-#         user = await conn.fetchrow("SELECT * FROM \"user\" WHERE uiud = $1", uiud)
-#         if user is None:
-#             await conn.execute("INSERT INTO \"user\" (uiud, name) VALUES ($1, $2)", uiud, interaction.user.name)
-#         # Check if the event exists in the server
-#         event = await conn.fetchrow(
-#             "SELECT eid, meetingname FROM event WHERE eid = $1 AND gid = $2",
-#             event_number, gid
-#         )
-
-#         if event:
-#             existing_signup = await conn.fetchrow(
-#                 "SELECT * FROM scheduled WHERE uiud = $1 AND eid = $2",
-#                 uiud, event['eid']
-#             )
-
-#             if not existing_signup:
-#                 await conn.execute(
-#                     "INSERT INTO scheduled (uiud, eid, status, notification) VALUES ($1, $2, 'Yes', 0)",
-#                     # right now im gonna do it so 'Yes' just means signed up and 0 means not notified, you would change to 1 once they have been, and then they wont get pinged again that way.
-#                     uiud, event['eid']
-#                 )
-#                 role_name = f"Event {event['eid']}"
-#                 await notification_role(interaction.guild, interaction.user.id, role_name)
-#                 await interaction.response.send_message(
-#                     f"You have been signed up for '{event['meetingname']}'.",
-#                     ephemeral=True
-#                 )
-#             else:
-#                 await interaction.response.send_message(
-#                     f"You are already signed up for '{event['meetingname']}'.",
-#                     ephemeral=True
-#                 )
-#         else:
-#             await interaction.response.send_message(
-#                 f"Event number {event_number} is either not in this server, or the event number is invalid",
-#                 ephemeral=True
-#             )
-
-
-@bot.tree.command(name="stop_notifications")
+@bot.tree.command(name="remove_notification")
 @app_commands.describe(event_id="The event number you want to stop getting notifications for")
 async def stop_notifications(interaction: discord.Interaction, event_id: int):
     uiud = str(interaction.user.id)
@@ -804,5 +769,6 @@ async def modify_event(interaction: discord.Interaction,
             await interaction.response.send_message("Event updated successfully.", ephemeral=True)
         else:
             await interaction.response.send_message("No changes specified for the event.", ephemeral=True)
+
 
 bot.run(os.getenv("DISCORD_TOKEN"))
