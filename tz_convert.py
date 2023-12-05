@@ -120,7 +120,5 @@ def date_format(date):
 
 
 def validate_time_input(start, end):
-
     current_utc = datetime.now(timezone.utc)
-
     return start < end and start > current_utc

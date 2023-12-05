@@ -134,27 +134,29 @@ class CreatePrivateView(discord.ui.View):
 
     @discord.ui.button(label="Submit", style=discord.ButtonStyle.green)
     async def submit_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        # Extract event details
         event_name = self.event_details['event_name']
         event_location = self.event_details['event_location']
         event_start = f"{self.event_details['event_start_date']} {local_to_utc(self.event_details['event_start_time'])}"
         event_end = f"{self.event_details['event_end_date']} {local_to_utc(self.event_details['event_end_time'])}"
-
         try:
+            event_start_cpy = event_start
+            event_end_cpy = event_end
+
+            event_start_utc = local_to_utc_date(event_start_cpy)
+            event_end_utc = local_to_utc_date(event_end_cpy)
+
             event_start = datetime.strptime(
-                event_start, "%Y-%m-%d %H:%M:%S").strftime("%Y-%m-%d %H:%M:%S")
+                event_start, "%Y-%m-%d %H:%M:%S")
             event_end = datetime.strptime(
-                event_end, "%Y-%m-%d %H:%M:%S").strftime("%Y-%m-%d %H:%M:%S")
+                event_end, "%Y-%m-%d %H:%M:%S")
 
-            event_start_utc = local_to_utc_date(event_start)
-            event_end_utc = local_to_utc_date(event_end)
+            # if not validate_time_input(event_start_utc, event_end_utc):
+            #     raise ValueError(
+            #         "Event start time is either past or after event end time")
 
-            if not validate_time_input(event_start_utc, event_end_utc):
-                raise ValueError(
-                    "Event start time is either past or after event end time")
-
-        except ValueError:
-            await interaction.response.send_message(
-                "Invalid timestamps, please make sure your timestamps follow the format (YYYY-MM-DD) for date and (HH:MM:SS) for time.\n Alternatively, Event start time could be either in the past or after the event end time", ephemeral=True)
+        except ValueError as e:
+            await interaction.response.send_message(str(e), ephemeral=True)
             self.future.set_result(True)
             return
 
@@ -206,24 +208,24 @@ class CreateServerView(discord.ui.View):
         event_location = self.event_details['event_location']
         event_start = f"{self.event_details['event_start_date']} {local_to_utc(self.event_details['event_start_time'])}"
         event_end = f"{self.event_details['event_end_date']} {local_to_utc(self.event_details['event_end_time'])}"
-
-        # Parse date and time
         try:
+            event_start_cpy = event_start
+            event_end_cpy = event_end
+
+            event_start_utc = local_to_utc_date(event_start_cpy)
+            event_end_utc = local_to_utc_date(event_end_cpy)
+
             event_start = datetime.strptime(
-                event_start, "%Y-%m-%d %H:%M:%S").strftime("%Y-%m-%d %H:%M:%S")
+                event_start, "%Y-%m-%d %H:%M:%S")
             event_end = datetime.strptime(
-                event_end, "%Y-%m-%d %H:%M:%S").strftime("%Y-%m-%d %H:%M:%S")
+                event_end, "%Y-%m-%d %H:%M:%S")
 
-            event_start_utc = local_to_utc_date(event_start)
-            event_end_utc = local_to_utc_date(event_end)
+            # if not validate_time_input(event_start_utc, event_end_utc):
+            #     raise ValueError(
+            #         "Event start time is either past or after event end time")
 
-            if not validate_time_input(event_start_utc, event_end_utc):
-                raise ValueError(
-                    "Event start time is either past or after event end time")
-
-        except ValueError:
-            await interaction.response.send_message(
-                "Invalid timestamps, please make sure your timestamps follow the format (YYYY-MM-DD) for date and (HH:MM:SS) for time.\n Alternatively, Event start time could be either in the past or after the event end time", ephemeral=True)
+        except ValueError as e:
+            await interaction.response.send_message(str(e), ephemeral=True)
             self.future.set_result(True)
             return
 
@@ -555,6 +557,8 @@ async def create_group_event(
         description="Please confirm the event creation:",
         color=discord.Color.blue()
     )
+    print("event start date: ", event_start_date)
+    print("event end date: ", event_end_date)
 
     embed.add_field(name="📧 Event", value=event_name, inline=False)
     embed.add_field(name="📍 Location", value=event_location, inline=False)
