@@ -586,14 +586,71 @@ async def get_notified(interaction: discord.Interaction, event_number: int):
             await conn.execute("INSERT INTO \"user\" (uiud, name) VALUES ($1, $2)", uiud, interaction.user.name)
 
         event = await conn.fetchrow(
-            "SELECT * FROM event WHERE eid = $1 AND gid = $2",
-            event_number, gid
+            # AND gid = $2",
+            "SELECT meetingname, eid, location, timestart, timeend FROM event WHERE eid = $1",
+            event_number  # ,gid
         )
 
         if event:
-            existing_signup = await conn.fetchrow(
-                "SELECT * FROM scheduled WHERE uiud = $1 AND eid = $2",
-                uiud, event['eid']
+            start_time_info = event['timestart'].strftime(
+                '%Y-%m-%d %H:%M:%S'
+            )
+            end_time_info = event['timeend'].strftime(
+                '%Y-%m-%d %H:%M:%S'
+            )
+            start_date, start_time = start_time_info.split(' ')
+            end_date, end_time = end_time_info.split(' ')
+            start_date, end_date = date_format(
+                start_date), date_format(end_date)
+
+            embed = discord.Embed(title=event['meetingname'])
+            embed.timestamp = datetime.now()
+            timezone = find_timezone(embed.timestamp)
+            # embed = discord.Embed(name=f"{event['meetingname']}
+
+            embed.add_field(name=f"(ID: {event['eid']})",
+                            value=f"\n📍 Location: {event['location']} \n 📅 Date: {start_date} to {end_date} \n⌚ Time: {convert_locale(start_time, timezone)} to {convert_locale(end_time, timezone)}.\n", inline=False)
+            view = NotificationView(
+                event['eid'], event['meetingname'], interaction.user.id, uiud, gid
+            )
+
+            await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+
+            await view.future
+
+            try:
+                await interaction.delete_original_response()
+            except discord.NotFound:
+                # Message might be already deleted, ignore this exception
+                pass
+            except Exception as e:
+                print(f"Error in deleting message after submit: {e}")
+
+        else:
+            await interaction.response.send_message(
+                f"Event number {event_number} is either not in this server, or the event number is invalid",
+                ephemeral=True
+            )
+
+
+@bot.tree.command(name="remove_notification")
+@app_commands.describe(event_id="The event number you want to stop getting notifications for")
+async def stop_notifications(interaction: discord.Interaction, event_id: int):
+    uiud = str(interaction.user.id)
+    server = interaction.guild
+
+    async with bot.pool.acquire() as conn:
+        # Check if the user is signed up for event
+        signup = await conn.fetchrow(
+            "SELECT * FROM scheduled WHERE uiud = $1 AND eid = $2",
+            uiud, event_id
+        )
+
+        if signup:
+            # Remove the user from the scheduled table
+            await conn.execute(
+                "DELETE FROM scheduled WHERE uiud = $1 AND eid = $2",
+                uiud, event_id
             )
 
             # Attempt to remove the role from server user
