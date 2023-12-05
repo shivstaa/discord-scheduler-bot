@@ -248,6 +248,43 @@ class PaginationView(View):
             await interaction.response.edit_message(embed=embed, view=self)
 
 
+class NotificationView(discord.ui.View):
+    def __init__(self, event_id, event_name, user_id, uiud, gid):
+        super().__init__(timeout=180)
+        self.event_id = event_id
+        self.event_name = event_name
+        self.user_id = user_id
+        self.uiud = uiud
+        self.gid = gid
+        self.future = asyncio.Future()
+
+    @discord.ui.button(label="Notify Me", style=discord.ButtonStyle.green)
+    async def notify_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        async with bot.pool.acquire() as conn:
+            existing_signup = await conn.fetchrow(
+                "SELECT * FROM scheduled WHERE uiud = $1 AND eid = $2",
+                self.uiud, self.event_id
+            )
+            if not existing_signup:
+                await conn.execute(
+                    "INSERT INTO scheduled (uiud, eid, status, notification) VALUES ($1, $2, 'Yes', 1)",
+                    self.uiud, self.event_id
+                )
+                role_name = f"Event {self.event_id}"
+                await notification_role(interaction.guild, interaction.user.id, role_name)
+                await interaction.response.send_message(f"You will be notified for '{self.event_name}'.", ephemeral=True)
+                self.future.set_result(True)
+            else:
+                await interaction.response.send_message(f"You are already signed up for '{self.event_name}'.", ephemeral=True)
+                self.future.set_result(True)
+
+    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.grey)
+    async def cancel_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        # Handle the cancellation of the command
+        await interaction.response.send_message("Command canceled.", ephemeral=True)
+        self.future.set_result(True)
+
+
 # create private event
 @bot.tree.command(name="create_private_event")
 @app_commands.describe(
@@ -512,40 +549,90 @@ async def get_notified(interaction: discord.Interaction, event_number: int):
         user = await conn.fetchrow("SELECT * FROM \"user\" WHERE uiud = $1", uiud)
         if user is None:
             await conn.execute("INSERT INTO \"user\" (uiud, name) VALUES ($1, $2)", uiud, interaction.user.name)
-        # Check if the event exists in the server
+
         event = await conn.fetchrow(
             "SELECT eid, meetingname FROM event WHERE eid = $1 AND gid = $2",
             event_number, gid
         )
 
         if event:
-            existing_signup = await conn.fetchrow(
-                "SELECT * FROM scheduled WHERE uiud = $1 AND eid = $2",
-                uiud, event['eid']
+            embed = discord.Embed(title=event['meetingname'])
+            embed.add_field(name="Event ID", value=event['eid'], inline=True)
+            # Add more fields as necessary
+            embed.timestamp = datetime.now()
+            timezone = find_timezone(embed.timestamp)
+
+            view = NotificationView(
+                event['eid'], event['meetingname'], interaction.user.id, uiud, gid
             )
 
-            if not existing_signup:
-                await conn.execute(
-                    "INSERT INTO scheduled (uiud, eid, status, notification) VALUES ($1, $2, 'Yes', 0)",
-                    # right now im gonna do it so 'Yes' just means signed up and 0 means not notified, you would change to 1 once they have been, and then they wont get pinged again that way.
-                    uiud, event['eid']
-                )
-                role_name = f"Event {event['eid']}"
-                await notification_role(interaction.guild, interaction.user.id, role_name)
-                await interaction.response.send_message(
-                    f"You have been signed up for '{event['meetingname']}'.",
-                    ephemeral=True
-                )
-            else:
-                await interaction.response.send_message(
-                    f"You are already signed up for '{event['meetingname']}'.",
-                    ephemeral=True
-                )
+            await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+
+            await view.future
+
+            try:
+                await interaction.delete_original_response()
+            except discord.NotFound:
+                # Message might be already deleted, ignore this exception
+                pass
+            except Exception as e:
+                print(f"Error in deleting message after submit: {e}")
+
         else:
             await interaction.response.send_message(
                 f"Event number {event_number} is either not in this server, or the event number is invalid",
                 ephemeral=True
             )
+
+# @bot.tree.command(name="get_notified")
+# @app_commands.describe(event_number="The event number you want to get notified for")
+# async def get_notified(interaction: discord.Interaction, event_number: int):
+#     # Ensure this is used within a server
+#     if interaction.guild_id is None:
+#         await interaction.response.send_message("This command can only be used in a server.", ephemeral=True)
+#         return
+
+#     uiud = str(interaction.user.id)
+#     gid = interaction.guild_id
+
+#     async with bot.pool.acquire() as conn:
+#         user = await conn.fetchrow("SELECT * FROM \"user\" WHERE uiud = $1", uiud)
+#         if user is None:
+#             await conn.execute("INSERT INTO \"user\" (uiud, name) VALUES ($1, $2)", uiud, interaction.user.name)
+#         # Check if the event exists in the server
+#         event = await conn.fetchrow(
+#             "SELECT eid, meetingname FROM event WHERE eid = $1 AND gid = $2",
+#             event_number, gid
+#         )
+
+#         if event:
+#             existing_signup = await conn.fetchrow(
+#                 "SELECT * FROM scheduled WHERE uiud = $1 AND eid = $2",
+#                 uiud, event['eid']
+#             )
+
+#             if not existing_signup:
+#                 await conn.execute(
+#                     "INSERT INTO scheduled (uiud, eid, status, notification) VALUES ($1, $2, 'Yes', 0)",
+#                     # right now im gonna do it so 'Yes' just means signed up and 0 means not notified, you would change to 1 once they have been, and then they wont get pinged again that way.
+#                     uiud, event['eid']
+#                 )
+#                 role_name = f"Event {event['eid']}"
+#                 await notification_role(interaction.guild, interaction.user.id, role_name)
+#                 await interaction.response.send_message(
+#                     f"You have been signed up for '{event['meetingname']}'.",
+#                     ephemeral=True
+#                 )
+#             else:
+#                 await interaction.response.send_message(
+#                     f"You are already signed up for '{event['meetingname']}'.",
+#                     ephemeral=True
+#                 )
+#         else:
+#             await interaction.response.send_message(
+#                 f"Event number {event_number} is either not in this server, or the event number is invalid",
+#                 ephemeral=True
+#             )
 
 
 @bot.tree.command(name="stop_notifications")
